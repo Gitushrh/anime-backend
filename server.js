@@ -37,8 +37,6 @@ async function initializeDatabase() {
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
-      enableKeepAlive: true,
-      keepAliveInitialDelayMs: 0,
     });
 
     const conn = await db.getConnection();
@@ -64,6 +62,7 @@ async function initializeDatabase() {
     return true;
   } catch (err) {
     console.error("❌ Database initialization error:", err.message);
+    console.error("Stack:", err.stack);
     return false;
   }
 }
