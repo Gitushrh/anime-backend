@@ -10,6 +10,9 @@ const scraper = require("./utils/scraper");
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// IMPORTANT: Trust proxy for Railway deployment
+app.set("trust proxy", 1);
+
 // Middleware
 app.use(cors());
 app.use(compression());
@@ -17,13 +20,15 @@ app.use(bodyParser.json({ limit: "50mb" }));
 app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: "Too many requests from this IP",
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { error: "Too many requests from this IP, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 app.use("/api/", limiter);
 
-// MySQL connection pool for Railway
+// MySQL connection pool
 let db;
 
 async function initializeDatabase() {
@@ -39,12 +44,12 @@ async function initializeDatabase() {
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
+      connectTimeout: 30000,
     });
 
     const conn = await db.getConnection();
     console.log("✅ MySQL connected successfully!");
     
-    // Create history table
     await conn.execute(`
       CREATE TABLE IF NOT EXISTS history (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -68,49 +73,35 @@ async function initializeDatabase() {
   }
 }
 
-// Attach db to request middleware
+// Attach db to request
 app.use((req, res, next) => {
   req.db = db;
   next();
 });
 
-// Health check endpoint
+// Health check
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  res.json({ 
+    status: "ok", 
+    timestamp: new Date().toISOString(),
+    database: db ? "connected" : "disconnected"
+  });
 });
 
 /* ==================== ANIME SCRAPING ROUTES ==================== */
 
-// Homepage - trending & slider anime
 app.get("/api/anime/home", scraper.homepage);
-
-// Weekly schedule
 app.get("/api/anime/schedule", scraper.schedule);
-
-// Filter by genre
 app.get("/api/anime/genre/:genre", scraper.genre);
-
-// Filter by release year
 app.get("/api/anime/release-year/:year", scraper.releaseYear);
-
-// Anime detail + episodes
 app.get("/api/anime/:slug", scraper.detailAnime);
-
-// Episode detail + streaming link
 app.get("/api/anime/episode/:slug", scraper.detailEpisode);
-
-// Search anime
 app.get("/api/anime/search/:query", scraper.search);
-
-// Currently airing anime
 app.get("/api/anime/ongoing", scraper.ongoing);
-
-// Current season ongoing
 app.get("/api/anime/season/ongoing", scraper.seasonOngoing);
 
 /* ==================== HISTORY MANAGEMENT ROUTES ==================== */
 
-// Save watch progress
 app.post("/api/history", async (req, res) => {
   const { deviceId, animeSlug, episodeSlug, lastPosition } = req.body;
   
@@ -134,7 +125,6 @@ app.post("/api/history", async (req, res) => {
   }
 });
 
-// Get user's watch history
 app.get("/api/history", async (req, res) => {
   const { deviceId } = req.query;
   
@@ -154,7 +144,6 @@ app.get("/api/history", async (req, res) => {
   }
 });
 
-// Get specific episode progress
 app.get("/api/history/:episodeSlug", async (req, res) => {
   const { deviceId } = req.query;
   const { episodeSlug } = req.params;
@@ -180,7 +169,6 @@ app.get("/api/history/:episodeSlug", async (req, res) => {
   }
 });
 
-// Delete watch history entry
 app.delete("/api/history", async (req, res) => {
   const { deviceId, episodeSlug } = req.body;
   
@@ -205,7 +193,6 @@ app.delete("/api/history", async (req, res) => {
   }
 });
 
-// Clear all watch history for device
 app.delete("/api/history/device/:deviceId", async (req, res) => {
   const { deviceId } = req.params;
   
@@ -224,12 +211,10 @@ app.delete("/api/history/device/:deviceId", async (req, res) => {
 
 /* ==================== ERROR HANDLING ==================== */
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: "Endpoint not found", path: req.path });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
   console.error("❌ Unhandled error:", err);
   res.status(500).json({ error: "Internal server error", message: err.message });
@@ -254,7 +239,6 @@ async function start() {
 
 start();
 
-// Graceful shutdown
 process.on("SIGINT", async () => {
   console.log("\n🛑 Shutting down gracefully...");
   if (db) await db.end();

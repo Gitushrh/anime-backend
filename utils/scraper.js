@@ -6,18 +6,27 @@ const BASE_URL = "https://www.sankavollerei.com/anime";
 const axiosInstance = axios.create({
   timeout: 10000,
   headers: {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
   },
 });
 
 async function fetchHTML(url) {
   try {
+    console.log(`🌐 Fetching: ${url}`);
     const { data } = await axiosInstance.get(url);
     return cheerio.load(data);
   } catch (err) {
     console.error(`❌ Fetch error for ${url}:`, err.message);
     throw new Error(`Failed to fetch: ${err.message}`);
   }
+}
+
+// Helper function to extract slug from href
+function extractSlug(href) {
+  if (!href) return "";
+  return href.split("/").filter(Boolean).pop() || "";
 }
 
 module.exports = {
@@ -27,16 +36,60 @@ module.exports = {
       const $ = await fetchHTML(`${BASE_URL}/home`);
       const animeList = [];
 
-      $(".anime-item").each((i, el) => {
+      // Debug: Log what elements we find
+      console.log("📋 Looking for anime items...");
+      
+      // Try multiple possible selectors
+      const selectors = [
+        ".anime-item",
+        ".anime-card",
+        "article",
+        ".post",
+        ".item",
+        "[class*='anime']",
+      ];
+
+      let foundSelector = null;
+      for (const selector of selectors) {
+        const count = $(selector).length;
+        if (count > 0) {
+          console.log(`✅ Found ${count} elements with selector: ${selector}`);
+          foundSelector = selector;
+          break;
+        }
+      }
+
+      if (!foundSelector) {
+        console.log("❌ No anime items found. Dumping page structure...");
+        console.log($("body").html().substring(0, 500));
+        return res.status(404).json({ 
+          error: "No anime found on homepage",
+          debug: "Check logs for HTML structure"
+        });
+      }
+
+      $(foundSelector).each((i, el) => {
         const $el = $(el);
-        const href = $el.find("a").attr("href") || "";
-        const slug = href.split("/").filter(Boolean).pop() || "";
+        const $link = $el.find("a").first();
+        const href = $link.attr("href") || "";
+        const slug = extractSlug(href);
+
+        // Try to find title
+        const title = $el.find(".title").text().trim() ||
+                     $el.find("h2, h3, h4").first().text().trim() ||
+                     $link.attr("title") ||
+                     "Unknown Title";
+
+        // Try to find thumbnail
+        const thumbnail = $el.find("img").attr("src") ||
+                         $el.find("img").attr("data-src") ||
+                         "";
 
         animeList.push({
-          title: $el.find(".title").text().trim(),
-          slug: slug,
-          thumbnail: $el.find("img").attr("src"),
-          rating: $el.find(".rating").text().trim() || "N/A",
+          title,
+          slug,
+          thumbnail,
+          rating: $el.find(".rating, .score").text().trim() || "N/A",
           status: $el.find(".status").text().trim() || "Unknown",
         });
       });
@@ -58,16 +111,16 @@ module.exports = {
       const $ = await fetchHTML(`${BASE_URL}/schedule`);
       const schedule = [];
 
-      $(".schedule-item").each((i, el) => {
+      $(".schedule-item, .schedule-card, [class*='schedule']").each((i, el) => {
         const $el = $(el);
         const href = $el.find("a").attr("href") || "";
-        const slug = href.split("/").filter(Boolean).pop() || "";
+        const slug = extractSlug(href);
 
         schedule.push({
-          day: $el.find(".day").text().trim(),
-          title: $el.find(".title").text().trim(),
-          slug: slug,
-          time: $el.find(".time").text().trim() || "TBA",
+          day: $el.find(".day, [class*='day']").text().trim(),
+          title: $el.find(".title, h3, h4").text().trim(),
+          slug,
+          time: $el.find(".time, [class*='time']").text().trim() || "TBA",
         });
       });
 
@@ -94,16 +147,16 @@ module.exports = {
       const $ = await fetchHTML(`${BASE_URL}/genre/${encodeURIComponent(genre)}`);
       const list = [];
 
-      $(".anime-item").each((i, el) => {
+      $(".anime-item, .anime-card, article").each((i, el) => {
         const $el = $(el);
         const href = $el.find("a").attr("href") || "";
-        const slug = href.split("/").filter(Boolean).pop() || "";
+        const slug = extractSlug(href);
 
         list.push({
-          title: $el.find(".title").text().trim(),
-          slug: slug,
-          thumbnail: $el.find("img").attr("src"),
-          rating: $el.find(".rating").text().trim() || "N/A",
+          title: $el.find(".title, h2, h3").text().trim(),
+          slug,
+          thumbnail: $el.find("img").attr("src") || $el.find("img").attr("data-src"),
+          rating: $el.find(".rating, .score").text().trim() || "N/A",
         });
       });
 
@@ -130,16 +183,16 @@ module.exports = {
       const $ = await fetchHTML(`${BASE_URL}/release-year/${year}`);
       const list = [];
 
-      $(".anime-item").each((i, el) => {
+      $(".anime-item, .anime-card, article").each((i, el) => {
         const $el = $(el);
         const href = $el.find("a").attr("href") || "";
-        const slug = href.split("/").filter(Boolean).pop() || "";
+        const slug = extractSlug(href);
 
         list.push({
-          title: $el.find(".title").text().trim(),
-          slug: slug,
-          thumbnail: $el.find("img").attr("src"),
-          year: year,
+          title: $el.find(".title, h2, h3").text().trim(),
+          slug,
+          thumbnail: $el.find("img").attr("src") || $el.find("img").attr("data-src"),
+          year,
         });
       });
 
@@ -164,19 +217,19 @@ module.exports = {
 
     try {
       const $ = await fetchHTML(`${BASE_URL}/${slug}`);
-      const title = $(".anime-title").text().trim();
-      const description = $(".anime-description").text().trim();
-      const rating = $(".anime-rating").text().trim();
+      const title = $(".anime-title, h1, .title").first().text().trim();
+      const description = $(".anime-description, .synopsis, .description").first().text().trim();
+      const rating = $(".anime-rating, .rating, .score").first().text().trim();
       const episodes = [];
 
       if (!title) {
         return res.status(404).json({ error: `Anime not found: ${slug}` });
       }
 
-      $(".episode-item").each((i, el) => {
+      $(".episode-item, .episode, [class*='episode']").each((i, el) => {
         const $el = $(el);
         const href = $el.find("a").attr("href") || "";
-        const epSlug = href.split("/").filter(Boolean).pop() || "";
+        const epSlug = extractSlug(href);
 
         episodes.push({
           title: $el.text().trim(),
@@ -212,8 +265,10 @@ module.exports = {
 
     try {
       const $ = await fetchHTML(`${BASE_URL}/episode/${slug}`);
-      const videoLink = $("video source").attr("src");
-      const title = $(".episode-title").text().trim();
+      const videoLink = $("video source").attr("src") ||
+                       $("iframe").attr("src") ||
+                       $("[class*='player'] iframe").attr("src");
+      const title = $(".episode-title, h1").text().trim();
 
       if (!videoLink) {
         return res.status(404).json({ error: "Video link not found for this episode" });
@@ -225,7 +280,7 @@ module.exports = {
           slug,
           title: title || "Episode",
           videoLink,
-          downloadUrl: videoLink, // Same as videoLink, can be customized
+          downloadUrl: videoLink,
         },
       });
     } catch (err) {
@@ -246,22 +301,18 @@ module.exports = {
       const $ = await fetchHTML(`${BASE_URL}/search/${encodeURIComponent(query)}`);
       const results = [];
 
-      $(".anime-item").each((i, el) => {
+      $(".anime-item, .anime-card, .search-result, article").each((i, el) => {
         const $el = $(el);
         const href = $el.find("a").attr("href") || "";
-        const slug = href.split("/").filter(Boolean).pop() || "";
+        const slug = extractSlug(href);
 
         results.push({
-          title: $el.find(".title").text().trim(),
-          slug: slug,
-          thumbnail: $el.find("img").attr("src"),
-          rating: $el.find(".rating").text().trim() || "N/A",
+          title: $el.find(".title, h2, h3").text().trim(),
+          slug,
+          thumbnail: $el.find("img").attr("src") || $el.find("img").attr("data-src"),
+          rating: $el.find(".rating, .score").text().trim() || "N/A",
         });
       });
-
-      if (results.length === 0) {
-        return res.json({ success: true, query, total: 0, data: [] });
-      }
 
       res.json({ success: true, query, total: results.length, data: results });
     } catch (err) {
@@ -276,15 +327,15 @@ module.exports = {
       const $ = await fetchHTML(`${BASE_URL}/ongoing`);
       const list = [];
 
-      $(".anime-item").each((i, el) => {
+      $(".anime-item, .anime-card, article").each((i, el) => {
         const $el = $(el);
         const href = $el.find("a").attr("href") || "";
-        const slug = href.split("/").filter(Boolean).pop() || "";
+        const slug = extractSlug(href);
 
         list.push({
-          title: $el.find(".title").text().trim(),
-          slug: slug,
-          thumbnail: $el.find("img").attr("src"),
+          title: $el.find(".title, h2, h3").text().trim(),
+          slug,
+          thumbnail: $el.find("img").attr("src") || $el.find("img").attr("data-src"),
           status: "Ongoing",
         });
       });
@@ -306,15 +357,15 @@ module.exports = {
       const $ = await fetchHTML(`${BASE_URL}/season/ongoing`);
       const list = [];
 
-      $(".anime-item").each((i, el) => {
+      $(".anime-item, .anime-card, article").each((i, el) => {
         const $el = $(el);
         const href = $el.find("a").attr("href") || "";
-        const slug = href.split("/").filter(Boolean).pop() || "";
+        const slug = extractSlug(href);
 
         list.push({
-          title: $el.find(".title").text().trim(),
-          slug: slug,
-          thumbnail: $el.find("img").attr("src"),
+          title: $el.find(".title, h2, h3").text().trim(),
+          slug,
+          thumbnail: $el.find("img").attr("src") || $el.find("img").attr("data-src"),
           season: "Current",
           status: "Ongoing",
         });
