@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -21,16 +22,30 @@ const db = mysql.createPool({
   user: process.env.MYSQLUSER,
   password: process.env.MYSQLPASSWORD,
   database: process.env.MYSQLDATABASE,
+  port: process.env.MYSQLPORT || 3306,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 });
 
-
-// Test koneksi
+// Test koneksi + buat tabel history jika belum ada
 db.getConnection()
-  .then(conn => {
+  .then(async (conn) => {
     console.log("✅ MySQL connected!");
+    
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS history (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        deviceId VARCHAR(255) NOT NULL,
+        animeSlug VARCHAR(255) NOT NULL,
+        episodeSlug VARCHAR(255) NOT NULL,
+        lastPosition INT DEFAULT 0,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_device_episode (deviceId, episodeSlug)
+      );
+    `);
+    console.log("✅ Table 'history' ready!");
+    
     conn.release();
   })
   .catch(err => console.error("❌ MySQL connection error:", err));
