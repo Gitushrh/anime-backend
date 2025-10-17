@@ -28,6 +28,8 @@ let db;
 
 async function initializeDatabase() {
   try {
+    console.log(`Attempting to connect to MySQL at ${process.env.MYSQLHOST}:${process.env.MYSQLPORT}...`);
+    
     db = mysql.createPool({
       host: process.env.MYSQLHOST,
       user: process.env.MYSQLUSER,
@@ -37,6 +39,8 @@ async function initializeDatabase() {
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
+      enableKeepAlive: true,
+      maxLifetimeSeconds: 28800,
     });
 
     const conn = await db.getConnection();
@@ -62,7 +66,6 @@ async function initializeDatabase() {
     return true;
   } catch (err) {
     console.error("❌ Database initialization error:", err.message);
-    console.error("Stack:", err.stack);
     return false;
   }
 }
@@ -240,12 +243,12 @@ async function start() {
   const dbReady = await initializeDatabase();
   
   if (!dbReady) {
-    console.error("❌ Failed to initialize database. Retrying in 5 seconds...");
-    setTimeout(start, 5000);
+    console.error("❌ Failed to initialize database. Retrying in 10 seconds...");
+    setTimeout(start, 10000);
     return;
   }
 
-  app.listen(PORT, () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ Server running on port ${PORT}`);
     console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
   });
