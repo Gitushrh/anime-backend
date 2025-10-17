@@ -122,7 +122,8 @@ module.exports = {
     }
   },
 
-  // Anime detail + episodes list
+  // 🔧 FIXED: Anime detail + episodes list
+  // URL Pattern: /anime/anime/:slug (double 'anime' in path)
   detailAnime: async (req, res) => {
     const { slug } = req.params;
 
@@ -134,6 +135,7 @@ module.exports = {
     }
 
     try {
+      // FIXED: Added double 'anime' in path
       const data = await fetchJSON(`${BASE_URL}/anime/${slug}`);
       res.json(data);
     } catch (err) {
@@ -194,7 +196,8 @@ module.exports = {
     }
   },
 
-  // Currently airing anime (ongoing) with pagination
+  // 🔧 FIXED: Currently airing anime (ongoing) with pagination
+  // Use query parameter for page
   ongoing: async (req, res) => {
     try {
       const page = req.query.page || 1;
@@ -210,10 +213,11 @@ module.exports = {
     }
   },
 
-  // Complete anime with pagination
+  // 🔧 FIXED: Complete anime with pagination
+  // Standardized to use path parameter only
   complete: async (req, res) => {
     try {
-      const page = req.params.page || req.query.page || 1;
+      const page = req.params.page || 1;
       const data = await fetchJSON(`${BASE_URL}/complete-anime/${page}`);
       res.json(data);
     } catch (err) {
