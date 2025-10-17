@@ -39,8 +39,6 @@ async function initializeDatabase() {
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
-      enableKeepAlive: true,
-      maxLifetimeSeconds: 28800,
     });
 
     const conn = await db.getConnection();
