@@ -1,4 +1,5 @@
 const axios = require("axios");
+const cheerio = require("cheerio"); // Install: npm install cheerio
 
 const BASE_URL = "https://www.sankavollerei.com/anime";
 
@@ -24,6 +25,96 @@ async function fetchJSON(url) {
   } catch (err) {
     console.error(`❌ Fetch error for ${url}:`, err.message);
     throw new Error(`Failed to fetch: ${err.message}`);
+  }
+}
+
+// 🆕 Function to scrape video links from episode page
+async function scrapeVideoLinks(episodeUrl) {
+  try {
+    console.log(`🎥 Scraping video from: ${episodeUrl}`);
+    const { data: html } = await axiosInstance.get(episodeUrl);
+    const $ = cheerio.load(html);
+    
+    const videoLinks = [];
+    
+    // Common video hosting patterns in anime sites
+    // Adjust selectors based on actual HTML structure
+    
+    // Method 1: Look for iframe sources
+    $('iframe').each((i, el) => {
+      const src = $(el).attr('src');
+      if (src && (src.includes('mp4') || src.includes('stream') || src.includes('embed'))) {
+        videoLinks.push({
+          quality: 'iframe',
+          url: src,
+          type: 'embed'
+        });
+      }
+    });
+    
+    // Method 2: Look for direct MP4 links
+    $('a[href*=".mp4"], source[src*=".mp4"]').each((i, el) => {
+      const url = $(el).attr('href') || $(el).attr('src');
+      const quality = $(el).text().trim() || 'unknown';
+      
+      if (url) {
+        videoLinks.push({
+          quality: quality.match(/\d+p?/)?.[0] || 'unknown',
+          url: url,
+          type: 'direct'
+        });
+      }
+    });
+    
+    // Method 3: Look for data attributes containing video URLs
+    $('[data-video], [data-src]').each((i, el) => {
+      const url = $(el).attr('data-video') || $(el).attr('data-src');
+      if (url && url.includes('mp4')) {
+        videoLinks.push({
+          quality: 'data-attr',
+          url: url,
+          type: 'direct'
+        });
+      }
+    });
+    
+    // Method 4: Extract from JavaScript variables
+    const scriptTags = $('script').map((i, el) => $(el).html()).get();
+    scriptTags.forEach(script => {
+      if (script) {
+        // Look for common video URL patterns in JS
+        const mp4Matches = script.match(/https?:\/\/[^"'\s]+\.mp4/g);
+        if (mp4Matches) {
+          mp4Matches.forEach(url => {
+            videoLinks.push({
+              quality: 'extracted',
+              url: url,
+              type: 'direct'
+            });
+          });
+        }
+        
+        // Look for m3u8 streams (HLS)
+        const m3u8Matches = script.match(/https?:\/\/[^"'\s]+\.m3u8/g);
+        if (m3u8Matches) {
+          m3u8Matches.forEach(url => {
+            videoLinks.push({
+              quality: 'hls',
+              url: url,
+              type: 'stream'
+            });
+          });
+        }
+      }
+    });
+    
+    // Remove duplicates
+    const uniqueLinks = [...new Map(videoLinks.map(v => [v.url, v])).values()];
+    
+    return uniqueLinks;
+  } catch (err) {
+    console.error(`❌ Video scraping error:`, err.message);
+    return [];
   }
 }
 
@@ -122,8 +213,7 @@ module.exports = {
     }
   },
 
-  // 🔧 FIXED: Anime detail + episodes list
-  // URL Pattern: /anime/anime/:slug (double 'anime' in path)
+  // Anime detail + episodes list
   detailAnime: async (req, res) => {
     const { slug } = req.params;
 
@@ -135,7 +225,6 @@ module.exports = {
     }
 
     try {
-      // FIXED: Added double 'anime' in path
       const data = await fetchJSON(`${BASE_URL}/anime/${slug}`);
       res.json(data);
     } catch (err) {
@@ -148,7 +237,7 @@ module.exports = {
     }
   },
 
-  // Episode detail + video link
+  // 🆕 Episode detail + video links (WITH SCRAPING)
   detailEpisode: async (req, res) => {
     const { slug } = req.params;
 
@@ -160,13 +249,72 @@ module.exports = {
     }
 
     try {
-      const data = await fetchJSON(`${BASE_URL}/episode/${slug}`);
-      res.json(data);
+      // Get episode metadata
+      const episodeData = await fetchJSON(`${BASE_URL}/episode/${slug}`);
+      
+      // Check if video links already exist in API response
+      if (!episodeData.data?.video_links || episodeData.data.video_links.length === 0) {
+        // If not, scrape from the otakudesu URL
+        const otakudesuUrl = episodeData.data?.otakudesu_url;
+        
+        if (otakudesuUrl) {
+          console.log('🎬 No video links in API, attempting to scrape...');
+          const scrapedLinks = await scrapeVideoLinks(otakudesuUrl);
+          
+          // Add scraped links to response
+          episodeData.data.scraped_video_links = scrapedLinks;
+        }
+      }
+      
+      res.json(episodeData);
     } catch (err) {
       console.error("❌ Episode detail error:", err.message);
       res.status(500).json({ 
         status: "error",
         message: "Failed to fetch episode detail", 
+        details: err.message 
+      });
+    }
+  },
+
+  // 🆕 Direct video scraper endpoint
+  getVideoLinks: async (req, res) => {
+    const { slug } = req.params;
+
+    if (!slug || slug.trim() === "") {
+      return res.status(400).json({ 
+        status: "error",
+        message: "Episode slug is required" 
+      });
+    }
+
+    try {
+      // Get episode data first to get otakudesu URL
+      const episodeData = await fetchJSON(`${BASE_URL}/episode/${slug}`);
+      const otakudesuUrl = episodeData.data?.otakudesu_url;
+      
+      if (!otakudesuUrl) {
+        return res.status(404).json({
+          status: "error",
+          message: "Episode URL not found"
+        });
+      }
+      
+      // Scrape video links
+      const videoLinks = await scrapeVideoLinks(otakudesuUrl);
+      
+      res.json({
+        status: "success",
+        episode_slug: slug,
+        source_url: otakudesuUrl,
+        video_links: videoLinks,
+        total: videoLinks.length
+      });
+    } catch (err) {
+      console.error("❌ Video links error:", err.message);
+      res.status(500).json({ 
+        status: "error",
+        message: "Failed to get video links", 
         details: err.message 
       });
     }
@@ -196,8 +344,7 @@ module.exports = {
     }
   },
 
-  // 🔧 FIXED: Currently airing anime (ongoing) with pagination
-  // Use query parameter for page
+  // Currently airing anime (ongoing) with pagination
   ongoing: async (req, res) => {
     try {
       const page = req.query.page || 1;
@@ -213,8 +360,7 @@ module.exports = {
     }
   },
 
-  // 🔧 FIXED: Complete anime with pagination
-  // Standardized to use path parameter only
+  // Complete anime with pagination
   complete: async (req, res) => {
     try {
       const page = req.params.page || 1;
