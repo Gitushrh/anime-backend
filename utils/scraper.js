@@ -58,9 +58,25 @@ module.exports = {
     }
   },
 
-  // Filter by genre
+  // Get all available genres
+  genreList: async (req, res) => {
+    try {
+      const data = await fetchJSON(`${BASE_URL}/genre`);
+      res.json(data);
+    } catch (err) {
+      console.error("❌ Genre list error:", err.message);
+      res.status(500).json({ 
+        status: "error",
+        message: "Failed to fetch genre list", 
+        details: err.message 
+      });
+    }
+  },
+
+  // Filter by genre with pagination
   genre: async (req, res) => {
     const { genre } = req.params;
+    const page = req.query.page || 1;
 
     if (!genre || genre.trim() === "") {
       return res.status(400).json({ 
@@ -70,7 +86,7 @@ module.exports = {
     }
 
     try {
-      const data = await fetchJSON(`${BASE_URL}/genre/${encodeURIComponent(genre)}`);
+      const data = await fetchJSON(`${BASE_URL}/genre/${encodeURIComponent(genre)}?page=${page}`);
       res.json(data);
     } catch (err) {
       console.error("❌ Genre filter error:", err.message);
