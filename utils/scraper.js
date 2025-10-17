@@ -8,7 +8,6 @@ const axiosInstance = axios.create({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.sankavollerei.com/",
   },
 });
 
@@ -29,57 +28,16 @@ async function fetchJSON(url) {
 }
 
 module.exports = {
-  // Homepage - slider, trending, seasonal anime
+  // Homepage - ongoing & complete anime
   homepage: async (req, res) => {
     try {
       const data = await fetchJSON(`${BASE_URL}/home`);
-      
-      const response = {
-        success: true,
-        creator: data.creator,
-        ongoing_anime: [],
-        complete_anime: [],
-      };
-
-      // Process ongoing anime
-      if (data.data.ongoing_anime && Array.isArray(data.data.ongoing_anime)) {
-        response.ongoing_anime = data.data.ongoing_anime.map((anime) => ({
-          title: anime.title,
-          slug: anime.slug,
-          poster: anime.poster,
-          currentEpisode: anime.current_episode,
-          releaseDay: anime.release_day,
-          newestReleaseDate: anime.newest_release_date,
-          otakudesuUrl: anime.otakudesu_url,
-        }));
-      }
-
-      // Process complete anime
-      if (data.data.complete_anime && Array.isArray(data.data.complete_anime)) {
-        response.complete_anime = data.data.complete_anime.map((anime) => ({
-          title: anime.title,
-          slug: anime.slug,
-          poster: anime.poster,
-          episodeCount: anime.episode_count,
-          rating: anime.rating,
-          lastReleaseDate: anime.last_release_date,
-          otakudesuUrl: anime.otakudesu_url,
-        }));
-      }
-
-      response.totalOngoing = response.ongoing_anime.length;
-      response.totalComplete = response.complete_anime.length;
-
-      if (response.totalOngoing === 0 && response.totalComplete === 0) {
-        return res.status(404).json({ error: "No anime found on homepage" });
-      }
-
-      res.json(response);
+      res.json(data);
     } catch (err) {
       console.error("❌ Homepage error:", err.message);
       res.status(500).json({ 
-        success: false,
-        error: "Failed to fetch homepage anime", 
+        status: "error",
+        message: "Failed to fetch homepage anime", 
         details: err.message 
       });
     }
@@ -89,32 +47,12 @@ module.exports = {
   schedule: async (req, res) => {
     try {
       const data = await fetchJSON(`${BASE_URL}/schedule`);
-      
-      if (!data.data || !Array.isArray(data.data)) {
-        return res.status(404).json({ error: "No schedule data found" });
-      }
-
-      const schedule = data.data.map((item) => ({
-        day: item.release_day || item.day,
-        title: item.title,
-        slug: item.slug,
-        poster: item.poster,
-        currentEpisode: item.current_episode,
-        newestReleaseDate: item.newest_release_date,
-        otakudesuUrl: item.otakudesu_url,
-      }));
-
-      res.json({ 
-        success: true, 
-        creator: data.creator,
-        total: schedule.length, 
-        data: schedule 
-      });
+      res.json(data);
     } catch (err) {
       console.error("❌ Schedule error:", err.message);
       res.status(500).json({ 
-        success: false,
-        error: "Failed to fetch schedule", 
+        status: "error",
+        message: "Failed to fetch schedule", 
         details: err.message 
       });
     }
@@ -125,38 +63,20 @@ module.exports = {
     const { genre } = req.params;
 
     if (!genre || genre.trim() === "") {
-      return res.status(400).json({ error: "Genre parameter is required" });
+      return res.status(400).json({ 
+        status: "error",
+        message: "Genre parameter is required" 
+      });
     }
 
     try {
       const data = await fetchJSON(`${BASE_URL}/genre/${encodeURIComponent(genre)}`);
-      
-      if (!data.data || !Array.isArray(data.data)) {
-        return res.status(404).json({ error: `No anime found for genre: ${genre}` });
-      }
-
-      const list = data.data.map((anime) => ({
-        title: anime.title,
-        slug: anime.slug,
-        poster: anime.poster,
-        rating: anime.rating || "N/A",
-        status: anime.status,
-        genres: anime.genres,
-        otakudesuUrl: anime.otakudesu_url,
-      }));
-
-      res.json({ 
-        success: true, 
-        creator: data.creator,
-        genre, 
-        total: list.length, 
-        data: list 
-      });
+      res.json(data);
     } catch (err) {
       console.error("❌ Genre filter error:", err.message);
       res.status(500).json({ 
-        success: false,
-        error: "Failed to fetch genre", 
+        status: "error",
+        message: "Failed to fetch genre", 
         details: err.message 
       });
     }
@@ -167,38 +87,20 @@ module.exports = {
     const { year } = req.params;
 
     if (!year || !/^\d{4}$/.test(year)) {
-      return res.status(400).json({ error: "Valid year (YYYY format) is required" });
+      return res.status(400).json({ 
+        status: "error",
+        message: "Valid year (YYYY format) is required" 
+      });
     }
 
     try {
       const data = await fetchJSON(`${BASE_URL}/release-year/${year}`);
-      
-      if (!data.data || !Array.isArray(data.data)) {
-        return res.status(404).json({ error: `No anime found for year: ${year}` });
-      }
-
-      const list = data.data.map((anime) => ({
-        title: anime.title,
-        slug: anime.slug,
-        poster: anime.poster,
-        rating: anime.rating,
-        status: anime.status,
-        releaseYear: year,
-        otakudesuUrl: anime.otakudesu_url,
-      }));
-
-      res.json({ 
-        success: true, 
-        creator: data.creator,
-        year, 
-        total: list.length, 
-        data: list 
-      });
+      res.json(data);
     } catch (err) {
       console.error("❌ Release year error:", err.message);
       res.status(500).json({ 
-        success: false,
-        error: "Failed to fetch by release year", 
+        status: "error",
+        message: "Failed to fetch by release year", 
         details: err.message 
       });
     }
@@ -209,42 +111,20 @@ module.exports = {
     const { slug } = req.params;
 
     if (!slug || slug.trim() === "") {
-      return res.status(400).json({ error: "Anime slug is required" });
+      return res.status(400).json({ 
+        status: "error",
+        message: "Anime slug is required" 
+      });
     }
 
     try {
-      const data = await fetchJSON(`${BASE_URL}/${slug}`);
-      
-      if (!data.data) {
-        return res.status(404).json({ error: `Anime not found: ${slug}` });
-      }
-
-      const anime = data.data;
-      
-      res.json({
-        success: true,
-        creator: data.creator,
-        data: {
-          title: anime.title,
-          slug: anime.slug,
-          poster: anime.poster,
-          synopsis: anime.synopsis,
-          rating: anime.rating,
-          status: anime.status,
-          genres: anime.genres || [],
-          releaseYear: anime.release_year,
-          totalEpisodes: anime.total_episodes,
-          studio: anime.studio,
-          duration: anime.duration,
-          episodes: anime.episodes || [],
-          otakudesuUrl: anime.otakudesu_url,
-        },
-      });
+      const data = await fetchJSON(`${BASE_URL}/anime/${slug}`);
+      res.json(data);
     } catch (err) {
       console.error("❌ Anime detail error:", err.message);
       res.status(500).json({ 
-        success: false,
-        error: "Failed to fetch anime detail", 
+        status: "error",
+        message: "Failed to fetch anime detail", 
         details: err.message 
       });
     }
@@ -255,38 +135,20 @@ module.exports = {
     const { slug } = req.params;
 
     if (!slug || slug.trim() === "") {
-      return res.status(400).json({ error: "Episode slug is required" });
+      return res.status(400).json({ 
+        status: "error",
+        message: "Episode slug is required" 
+      });
     }
 
     try {
       const data = await fetchJSON(`${BASE_URL}/episode/${slug}`);
-      
-      if (!data.data) {
-        return res.status(404).json({ error: "Episode not found" });
-      }
-
-      const episode = data.data;
-
-      res.json({
-        success: true,
-        creator: data.creator,
-        data: {
-          title: episode.title,
-          slug: episode.slug,
-          animeTitle: episode.anime_title,
-          animeSlug: episode.anime_slug,
-          episodeNumber: episode.episode_number,
-          releaseDate: episode.release_date,
-          streamLinks: episode.stream_links || [],
-          downloadLinks: episode.download_links || [],
-          otakudesuUrl: episode.otakudesu_url,
-        },
-      });
+      res.json(data);
     } catch (err) {
       console.error("❌ Episode detail error:", err.message);
       res.status(500).json({ 
-        success: false,
-        error: "Failed to fetch episode detail", 
+        status: "error",
+        message: "Failed to fetch episode detail", 
         details: err.message 
       });
     }
@@ -297,80 +159,52 @@ module.exports = {
     const { query } = req.params;
 
     if (!query || query.trim() === "") {
-      return res.status(400).json({ error: "Search query is required" });
+      return res.status(400).json({ 
+        status: "error",
+        message: "Search query is required" 
+      });
     }
 
     try {
       const data = await fetchJSON(`${BASE_URL}/search/${encodeURIComponent(query)}`);
-      
-      if (!data.data) {
-        return res.json({ 
-          success: true, 
-          creator: data.creator,
-          query, 
-          total: 0, 
-          data: [] 
-        });
-      }
-
-      const results = Array.isArray(data.data) ? data.data.map((anime) => ({
-        title: anime.title,
-        slug: anime.slug,
-        poster: anime.poster,
-        rating: anime.rating || "N/A",
-        status: anime.status,
-        genres: anime.genres || [],
-        otakudesuUrl: anime.otakudesu_url,
-      })) : [];
-
-      res.json({ 
-        success: true, 
-        creator: data.creator,
-        query, 
-        total: results.length, 
-        data: results 
-      });
+      res.json(data);
     } catch (err) {
       console.error("❌ Search error:", err.message);
       res.status(500).json({ 
-        success: false,
-        error: "Search failed", 
+        status: "error",
+        message: "Search failed", 
         details: err.message 
       });
     }
   },
 
-  // Currently airing anime
+  // Currently airing anime (ongoing) with pagination
   ongoing: async (req, res) => {
     try {
-      const data = await fetchJSON(`${BASE_URL}/ongoing`);
-      
-      if (!data.data || !Array.isArray(data.data)) {
-        return res.status(404).json({ error: "No ongoing anime found" });
-      }
-
-      const list = data.data.map((anime) => ({
-        title: anime.title,
-        slug: anime.slug,
-        poster: anime.poster,
-        currentEpisode: anime.current_episode,
-        releaseDay: anime.release_day,
-        newestReleaseDate: anime.newest_release_date,
-        status: "Ongoing",
-        otakudesuUrl: anime.otakudesu_url,
-      }));
-
-      res.json({ 
-        success: true, 
-        creator: data.creator,
-        total: list.length, 
-        data: list 
-      });
+      const page = req.query.page || 1;
+      const data = await fetchJSON(`${BASE_URL}/ongoing-anime?page=${page}`);
+      res.json(data);
     } catch (err) {
       console.error("❌ Ongoing anime error:", err.message);
       res.status(500).json({ 
-        success: false,
-        error: "Failed to fetch ongoing anime", 
+        status: "error",
+        message: "Failed to fetch ongoing anime", 
+        details: err.message 
+      });
+    }
+  },
+
+  // Complete anime with pagination
+  complete: async (req, res) => {
+    try {
+      const page = req.params.page || req.query.page || 1;
+      const data = await fetchJSON(`${BASE_URL}/complete-anime/${page}`);
+      res.json(data);
+    } catch (err) {
+      console.error("❌ Complete anime error:", err.message);
+      res.status(500).json({ 
+        status: "error",
+        message: "Failed to fetch complete anime", 
         details: err.message 
       });
     }
@@ -380,34 +214,12 @@ module.exports = {
   seasonOngoing: async (req, res) => {
     try {
       const data = await fetchJSON(`${BASE_URL}/season/ongoing`);
-      
-      if (!data.data || !Array.isArray(data.data)) {
-        return res.status(404).json({ error: "No season ongoing anime found" });
-      }
-
-      const list = data.data.map((anime) => ({
-        title: anime.title,
-        slug: anime.slug,
-        poster: anime.poster,
-        currentEpisode: anime.current_episode,
-        releaseDay: anime.release_day,
-        newestReleaseDate: anime.newest_release_date,
-        season: anime.season || "Current",
-        status: "Ongoing",
-        otakudesuUrl: anime.otakudesu_url,
-      }));
-
-      res.json({ 
-        success: true, 
-        creator: data.creator,
-        total: list.length, 
-        data: list 
-      });
+      res.json(data);
     } catch (err) {
       console.error("❌ Season ongoing error:", err.message);
       res.status(500).json({ 
-        success: false,
-        error: "Failed to fetch season ongoing", 
+        status: "error",
+        message: "Failed to fetch season ongoing", 
         details: err.message 
       });
     }
