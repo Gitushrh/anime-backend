@@ -17,14 +17,15 @@ app.use(rateLimit({ windowMs: 60 * 1000, max: 100 }));
 
 // MySQL connection (Railway MySQL env)
 const db = mysql.createPool({
-  host: process.env.MYSQLHOST || "localhost",
-  user: process.env.MYSQLUSER || "root",
-  password: process.env.MYSQLPASSWORD || "",
-  database: process.env.MYSQLDATABASE || "animes_app",
+  host: process.env.MYSQLHOST,
+  user: process.env.MYSQLUSER,
+  password: process.env.MYSQLPASSWORD,
+  database: process.env.MYSQLDATABASE,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 });
+
 
 // Test koneksi
 db.getConnection()
