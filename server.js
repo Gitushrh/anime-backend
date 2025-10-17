@@ -6,6 +6,7 @@ const compression = require("compression");
 const rateLimit = require("express-rate-limit");
 const mysql = require("mysql2/promise");
 const scraper = require("./utils/scraper");
+const videoScraper = require("./utils/videoScraper"); // 🆕 Import video scraper
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -92,16 +93,24 @@ app.get("/api/health", (req, res) => {
 
 app.get("/api/anime/home", scraper.homepage);
 app.get("/api/anime/schedule", scraper.schedule);
+app.get("/api/anime/genres", scraper.genreList); // 🔧 Fixed: changed from /genre to /genres
 app.get("/api/anime/genre/:genre", scraper.genre);
 app.get("/api/anime/release-year/:year", scraper.releaseYear);
 app.get("/api/anime/:slug", scraper.detailAnime);
 app.get("/api/anime/episode/:slug", scraper.detailEpisode);
 app.get("/api/anime/search/:query", scraper.search);
 app.get("/api/anime/ongoing", scraper.ongoing);
+app.get("/api/anime/complete/:page", scraper.complete); // 🔧 Added page parameter
 app.get("/api/anime/season/ongoing", scraper.seasonOngoing);
+
+/* ==================== VIDEO SCRAPING ROUTES ==================== */
+// 🆕 New endpoints for video extraction
+app.get("/api/video/:slug", videoScraper.getVideoLinks);
+app.post("/api/video/direct-stream", videoScraper.getDirectStream);
 
 /* ==================== HISTORY MANAGEMENT ROUTES ==================== */
 
+// Save or update watch progress
 app.post("/api/history", async (req, res) => {
   const { deviceId, animeSlug, episodeSlug, lastPosition } = req.body;
   
@@ -125,6 +134,7 @@ app.post("/api/history", async (req, res) => {
   }
 });
 
+// Get all watch history for a device
 app.get("/api/history", async (req, res) => {
   const { deviceId } = req.query;
   
@@ -144,6 +154,7 @@ app.get("/api/history", async (req, res) => {
   }
 });
 
+// Get watch progress for specific episode
 app.get("/api/history/:episodeSlug", async (req, res) => {
   const { deviceId } = req.query;
   const { episodeSlug } = req.params;
@@ -169,6 +180,7 @@ app.get("/api/history/:episodeSlug", async (req, res) => {
   }
 });
 
+// Delete specific episode from history
 app.delete("/api/history", async (req, res) => {
   const { deviceId, episodeSlug } = req.body;
   
@@ -193,6 +205,7 @@ app.delete("/api/history", async (req, res) => {
   }
 });
 
+// Clear all watch history for a device
 app.delete("/api/history/device/:deviceId", async (req, res) => {
   const { deviceId } = req.params;
   
@@ -234,6 +247,7 @@ async function start() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ Server running on port ${PORT}`);
     console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
+    console.log(`🎬 Video API: http://localhost:${PORT}/api/video/:slug`);
   });
 }
 
