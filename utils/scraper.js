@@ -1,243 +1,214 @@
-const axios = require("axios");
+const axios = require('axios');
 
-const BASE_URL = "https://www.sankavollerei.com/anime";
+const BASE_URL = 'https://www.sankavollerei.com/anime';
 
-const axiosInstance = axios.create({
-  timeout: 15000,
-  headers: {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-  },
-});
-
-async function fetchJSON(url) {
-  try {
-    console.log(`🌐 Fetching JSON from: ${url}`);
-    const { data } = await axiosInstance.get(url);
-    
-    if (data.status === "success") {
-      return data;
-    } else {
-      throw new Error("API returned unsuccessful status");
+// Helper function untuk handle request dengan retry
+async function fetchWithRetry(url, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await axios.get(url, {
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/json, text/plain, */*'
+        }
+      });
+      
+      if (response.data.status === 'success') {
+        return response.data;
+      }
+      throw new Error('API returned unsuccessful status');
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
     }
-  } catch (err) {
-    console.error(`❌ Fetch error for ${url}:`, err.message);
-    throw new Error(`Failed to fetch: ${err.message}`);
+  }
+}
+
+// Scrape home page - ongoing & complete anime
+async function scrapeHome() {
+  try {
+    const html = await fetchWithRetry(BASE_URL);
+    const $ = cheerio.load(html);
+    
+    const ongoingAnime = [];
+    const completeAnime = [];
+
+    // Scrape ongoing anime
+    $('.venz ul li').each((i, el) => {
+      const title = $(el).find('.jdlflm').text().trim();
+      const slug = $(el).find('a').attr('href')?.split('/anime/')[1]?.replace('/', '');
+      const poster = $(el).find('img').attr('src');
+      const episode = $(el).find('.epz').text().trim();
+      const date = $(el).find('.newnime').text().trim();
+
+      if (title && slug) {
+        ongoingAnime.push({ title, slug, poster, episode, date });
+      }
+    });
+
+    // Scrape complete anime
+    $('.venz.col-anime ul li').each((i, el) => {
+      const title = $(el).find('.jdlflm').text().trim();
+      const slug = $(el).find('a').attr('href')?.split('/anime/')[1]?.replace('/', '');
+      const poster = $(el).find('img').attr('src');
+      const rating = $(el).find('.epz').text().trim();
+      const date = $(el).find('.newnime').text().trim();
+
+      if (title && slug) {
+        completeAnime.push({ title, slug, poster, rating, date });
+      }
+    });
+
+    return { ongoingAnime, completeAnime };
+  } catch (error) {
+    console.error('Error scraping home:', error);
+    throw new Error('Failed to scrape home page');
+  }
+}
+
+// Scrape anime detail + episode list
+async function scrapeAnimeDetail(slug) {
+  try {
+    const url = `${BASE_URL}/anime/${slug}`;
+    const html = await fetchWithRetry(url);
+    const $ = cheerio.load(html);
+
+    // Basic info
+    const title = $('.infozingle p span:contains("Judul")').parent().text().replace('Judul: ', '').trim();
+    const poster = $('.fotoanime img').attr('src');
+    const synopsis = $('.sinopc').text().trim();
+    const rating = $('.infozingle p span:contains("Skor")').parent().text().replace('Skor: ', '').trim();
+    const status = $('.infozingle p span:contains("Status")').parent().text().replace('Status: ', '').trim();
+    const studio = $('.infozingle p span:contains("Studio")').parent().text().replace('Studio: ', '').trim();
+    
+    // Genres
+    const genres = [];
+    $('.infozingle p:contains("Genre") a').each((i, el) => {
+      genres.push($(el).text().trim());
+    });
+
+    // Episode list
+    const episodes = [];
+    $('.episodelist ul li').each((i, el) => {
+      const episodeTitle = $(el).find('a').text().trim();
+      const episodeSlug = $(el).find('a').attr('href')?.split('/episode/')[1]?.replace('/', '');
+      const episodeNumber = episodeTitle.match(/Episode (\d+)/)?.[1];
+
+      if (episodeSlug) {
+        episodes.push({ 
+          episodeTitle, 
+          episodeSlug, 
+          episodeNumber: episodeNumber ? parseInt(episodeNumber) : i + 1 
+        });
+      }
+    });
+
+    return {
+      title,
+      slug,
+      poster,
+      synopsis,
+      rating,
+      status,
+      studio,
+      genres,
+      episodes
+    };
+  } catch (error) {
+    console.error('Error scraping anime detail:', error);
+    throw new Error('Failed to scrape anime detail');
+  }
+}
+
+// Scrape episode streaming/download links
+async function scrapeEpisode(slug) {
+  try {
+    const url = `${BASE_URL}/episode/${slug}`;
+    const html = await fetchWithRetry(url);
+    const $ = cheerio.load(html);
+
+    const episodeTitle = $('.venutama h1').text().trim();
+    const streamUrl = $('.responsive-embed-stream iframe').attr('src');
+    
+    // Download links
+    const downloads = {
+      mp4: [],
+      mkv: []
+    };
+
+    $('.download ul li').each((i, el) => {
+      const resolution = $(el).find('strong').text().trim();
+      const links = [];
+      
+      $(el).find('a').each((j, link) => {
+        const provider = $(link).text().trim();
+        const url = $(link).attr('href');
+        if (url) links.push({ provider, url });
+      });
+
+      if (resolution.includes('360p') || resolution.includes('480p') || resolution.includes('720p') || resolution.includes('1080p')) {
+        const format = resolution.toLowerCase().includes('mkv') ? 'mkv' : 'mp4';
+        const res = resolution.match(/(\d+p)/)?.[1];
+        
+        if (res && links.length > 0) {
+          downloads[format].push({ resolution: res, links });
+        }
+      }
+    });
+
+    // Navigation
+    const prevEpisode = $('.flir a:contains("Episode Sebelumnya")').attr('href')?.split('/episode/')[1]?.replace('/', '');
+    const nextEpisode = $('.flir a:contains("Episode Selanjutnya")').attr('href')?.split('/episode/')[1]?.replace('/', '');
+
+    return {
+      episodeTitle,
+      slug,
+      streamUrl,
+      downloads,
+      navigation: {
+        prevEpisode: prevEpisode || null,
+        nextEpisode: nextEpisode || null
+      }
+    };
+  } catch (error) {
+    console.error('Error scraping episode:', error);
+    throw new Error('Failed to scrape episode');
+  }
+}
+
+// Search anime
+async function searchAnime(query) {
+  try {
+    const url = `${BASE_URL}/?s=${encodeURIComponent(query)}&post_type=anime`;
+    const html = await fetchWithRetry(url);
+    const $ = cheerio.load(html);
+
+    const results = [];
+
+    $('.chivsrc li').each((i, el) => {
+      const title = $(el).find('h2').text().trim();
+      const slug = $(el).find('a').attr('href')?.split('/anime/')[1]?.replace('/', '');
+      const poster = $(el).find('img').attr('src');
+      const genres = $(el).find('.set').text().trim();
+      const status = $(el).find('.set:contains("Status")').text().replace('Status:', '').trim();
+      const rating = $(el).find('.set:contains("Rating")').text().replace('Rating:', '').trim();
+
+      if (title && slug) {
+        results.push({ title, slug, poster, genres, status, rating });
+      }
+    });
+
+    return results;
+  } catch (error) {
+    console.error('Error searching anime:', error);
+    throw new Error('Failed to search anime');
   }
 }
 
 module.exports = {
-  // Homepage - ongoing & complete anime
-  homepage: async (req, res) => {
-    try {
-      const data = await fetchJSON(`${BASE_URL}/home`);
-      res.json(data);
-    } catch (err) {
-      console.error("❌ Homepage error:", err.message);
-      res.status(500).json({ 
-        status: "error",
-        message: "Failed to fetch homepage anime", 
-        details: err.message 
-      });
-    }
-  },
-
-  // Weekly schedule
-  schedule: async (req, res) => {
-    try {
-      const data = await fetchJSON(`${BASE_URL}/schedule`);
-      res.json(data);
-    } catch (err) {
-      console.error("❌ Schedule error:", err.message);
-      res.status(500).json({ 
-        status: "error",
-        message: "Failed to fetch schedule", 
-        details: err.message 
-      });
-    }
-  },
-
-  // Get all available genres
-  genreList: async (req, res) => {
-    try {
-      const data = await fetchJSON(`${BASE_URL}/genre`);
-      res.json(data);
-    } catch (err) {
-      console.error("❌ Genre list error:", err.message);
-      res.status(500).json({ 
-        status: "error",
-        message: "Failed to fetch genre list", 
-        details: err.message 
-      });
-    }
-  },
-
-  // Filter by genre with pagination
-  genre: async (req, res) => {
-    const { genre } = req.params;
-    const page = req.query.page || 1;
-
-    if (!genre || genre.trim() === "") {
-      return res.status(400).json({ 
-        status: "error",
-        message: "Genre parameter is required" 
-      });
-    }
-
-    try {
-      const data = await fetchJSON(`${BASE_URL}/genre/${encodeURIComponent(genre)}?page=${page}`);
-      res.json(data);
-    } catch (err) {
-      console.error("❌ Genre filter error:", err.message);
-      res.status(500).json({ 
-        status: "error",
-        message: "Failed to fetch genre", 
-        details: err.message 
-      });
-    }
-  },
-
-  // Filter by release year
-  releaseYear: async (req, res) => {
-    const { year } = req.params;
-
-    if (!year || !/^\d{4}$/.test(year)) {
-      return res.status(400).json({ 
-        status: "error",
-        message: "Valid year (YYYY format) is required" 
-      });
-    }
-
-    try {
-      const data = await fetchJSON(`${BASE_URL}/release-year/${year}`);
-      res.json(data);
-    } catch (err) {
-      console.error("❌ Release year error:", err.message);
-      res.status(500).json({ 
-        status: "error",
-        message: "Failed to fetch by release year", 
-        details: err.message 
-      });
-    }
-  },
-
-  // Anime detail + episodes list
-  detailAnime: async (req, res) => {
-    const { slug } = req.params;
-
-    if (!slug || slug.trim() === "") {
-      return res.status(400).json({ 
-        status: "error",
-        message: "Anime slug is required" 
-      });
-    }
-
-    try {
-      const data = await fetchJSON(`${BASE_URL}/anime/${slug}`);
-      res.json(data);
-    } catch (err) {
-      console.error("❌ Anime detail error:", err.message);
-      res.status(500).json({ 
-        status: "error",
-        message: "Failed to fetch anime detail", 
-        details: err.message 
-      });
-    }
-  },
-
-  // Episode detail + video link
-  detailEpisode: async (req, res) => {
-    const { slug } = req.params;
-
-    if (!slug || slug.trim() === "") {
-      return res.status(400).json({ 
-        status: "error",
-        message: "Episode slug is required" 
-      });
-    }
-
-    try {
-      const data = await fetchJSON(`${BASE_URL}/episode/${slug}`);
-      res.json(data);
-    } catch (err) {
-      console.error("❌ Episode detail error:", err.message);
-      res.status(500).json({ 
-        status: "error",
-        message: "Failed to fetch episode detail", 
-        details: err.message 
-      });
-    }
-  },
-
-  // Search anime
-  search: async (req, res) => {
-    const { query } = req.params;
-
-    if (!query || query.trim() === "") {
-      return res.status(400).json({ 
-        status: "error",
-        message: "Search query is required" 
-      });
-    }
-
-    try {
-      const data = await fetchJSON(`${BASE_URL}/search/${encodeURIComponent(query)}`);
-      res.json(data);
-    } catch (err) {
-      console.error("❌ Search error:", err.message);
-      res.status(500).json({ 
-        status: "error",
-        message: "Search failed", 
-        details: err.message 
-      });
-    }
-  },
-
-  // Currently airing anime (ongoing) with pagination
-  ongoing: async (req, res) => {
-    try {
-      const page = req.query.page || 1;
-      const data = await fetchJSON(`${BASE_URL}/ongoing-anime?page=${page}`);
-      res.json(data);
-    } catch (err) {
-      console.error("❌ Ongoing anime error:", err.message);
-      res.status(500).json({ 
-        status: "error",
-        message: "Failed to fetch ongoing anime", 
-        details: err.message 
-      });
-    }
-  },
-
-  // Complete anime with pagination
-  complete: async (req, res) => {
-    try {
-      const page = req.params.page || req.query.page || 1;
-      const data = await fetchJSON(`${BASE_URL}/complete-anime/${page}`);
-      res.json(data);
-    } catch (err) {
-      console.error("❌ Complete anime error:", err.message);
-      res.status(500).json({ 
-        status: "error",
-        message: "Failed to fetch complete anime", 
-        details: err.message 
-      });
-    }
-  },
-
-  // Current season ongoing
-  seasonOngoing: async (req, res) => {
-    try {
-      const data = await fetchJSON(`${BASE_URL}/season/ongoing`);
-      res.json(data);
-    } catch (err) {
-      console.error("❌ Season ongoing error:", err.message);
-      res.status(500).json({ 
-        status: "error",
-        message: "Failed to fetch season ongoing", 
-        details: err.message 
-      });
-    }
-  },
+  scrapeHome,
+  scrapeAnimeDetail,
+  scrapeEpisode,
+  searchAnime
 };
