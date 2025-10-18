@@ -82,13 +82,34 @@ app.get('/api/popular', async (req, res) => {
   }
 });
 
-// Get anime detail
-app.get('/api/anime/:slug', async (req, res) => {
+// Get ongoing anime
+app.get('/api/ongoing', async (req, res) => {
   try {
-    const { slug } = req.params;
-    console.log(`Fetching anime detail: ${slug}`);
+    console.log('Fetching ongoing anime...');
+    const animes = await scraper.getOngoingAnime();
     
-    const detail = await scraper.getAnimeDetail(slug);
+    res.json({ 
+      success: true, 
+      count: animes.length,
+      data: animes 
+    });
+  } catch (error) {
+    console.error('API Error /ongoing:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch ongoing anime',
+      message: error.message 
+    });
+  }
+});
+
+// Get anime detail
+app.get('/api/anime/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`Fetching anime detail: ${id}`);
+    
+    const detail = await scraper.getAnimeDetail(id);
     
     if (!detail || !detail.title) {
       return res.status(404).json({ 
@@ -103,10 +124,33 @@ app.get('/api/anime/:slug', async (req, res) => {
       data: detail 
     });
   } catch (error) {
-    console.error('API Error /anime/:slug:', error.message);
+    console.error('API Error /anime/:id:', error.message);
     res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch anime detail',
+      message: error.message 
+    });
+  }
+});
+
+// Get anime by season
+app.get('/api/season/:year/:season', async (req, res) => {
+  try {
+    const { year, season } = req.params;
+    console.log(`Fetching anime for ${season} ${year}`);
+    
+    const animes = await scraper.getAnimeBySeason(year, season);
+    
+    res.json({ 
+      success: true, 
+      count: animes.length,
+      data: animes 
+    });
+  } catch (error) {
+    console.error('API Error /season/:year/:season:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch seasonal anime',
       message: error.message 
     });
   }
