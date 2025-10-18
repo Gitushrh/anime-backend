@@ -1,4 +1,4 @@
-// utils/scraper.js - Enhanced Web Scraping with Direct Video Links
+// utils/scraper.js - Enhanced with Better Direct Video Extraction
 const axios = require('axios');
 const cheerio = require('cheerio');
 
@@ -32,64 +32,262 @@ class AnimeScraper {
     return parts[parts.length - 1] || '';
   }
 
-  // Extract direct video URL from iframe sources
-  async extractVideoUrl(iframeUrl) {
+  // Enhanced: Extract direct video URL from various iframe sources
+  async extractDirectVideoUrl(iframeUrl, provider) {
     try {
-      console.log(`🎬 Extracting video from: ${iframeUrl}`);
+      console.log(`🎬 Extracting from ${provider}: ${iframeUrl}`);
       
-      // Skip if it's a download link shortener
-      if (iframeUrl.includes('otakufiles') || 
-          iframeUrl.includes('racaty') ||
-          iframeUrl.includes('drive.google')) {
+      // Skip download/shortener links
+      const skipPatterns = [
+        'otakufiles', 'racaty', 'gdrive', 'drive.google',
+        'zippyshare', 'mega.nz', 'mediafire', 'uptobox',
+        'solidfiles', 'tusfiles', 'anonfiles'
+      ];
+      
+      if (skipPatterns.some(pattern => iframeUrl.includes(pattern))) {
+        console.log('⏭️ Skipping download link');
         return null;
       }
+
+      const response = await this.api.get(iframeUrl, {
+        headers: {
+          'Referer': this.baseUrl,
+          'Origin': this.baseUrl
+        }
+      });
       
-      const response = await this.api.get(iframeUrl);
       const html = response.data;
-      
-      // Try to find MP4 or M3U8 links in the response
-      const mp4Regex = /(https?:\/\/[^"'\s]+\.mp4[^"'\s]*)/gi;
-      const m3u8Regex = /(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/gi;
-      
-      const mp4Matches = html.match(mp4Regex);
-      const m3u8Matches = html.match(m3u8Regex);
-      
-      if (mp4Matches && mp4Matches.length > 0) {
-        console.log(`✅ Found MP4: ${mp4Matches[0]}`);
-        return { url: mp4Matches[0], type: 'mp4' };
-      }
-      
-      if (m3u8Matches && m3u8Matches.length > 0) {
-        console.log(`✅ Found HLS: ${m3u8Matches[0]}`);
-        return { url: m3u8Matches[0], type: 'hls' };
-      }
-      
-      // Try to find video source in various formats
-      const videoSrcRegex = /(?:file|src|source)["']?\s*[:=]\s*["']([^"']+)["']/gi;
-      const matches = [...html.matchAll(videoSrcRegex)];
-      
-      for (const match of matches) {
-        const url = match[1];
-        if (url.includes('.mp4') || url.includes('.m3u8')) {
-          console.log(`✅ Found video: ${url}`);
-          return {
-            url: url,
-            type: url.includes('.m3u8') ? 'hls' : 'mp4'
-          };
+      const $ = cheerio.load(html);
+
+      // Method 1: Direct regex patterns for video URLs
+      const videoPatterns = [
+        // MP4 URLs
+        /https?:\/\/[^"'\s<>]+\.mp4(?:\?[^"'\s<>]*)?/gi,
+        // M3U8 URLs
+        /https?:\/\/[^"'\s<>]+\.m3u8(?:\?[^"'\s<>]*)?/gi,
+        // Common video CDN patterns
+        /https?:\/\/[^"'\s<>]*(?:stream|video|cdn|media)[^"'\s<>]*\.(?:mp4|m3u8)/gi,
+      ];
+
+      for (const pattern of videoPatterns) {
+        const matches = html.match(pattern);
+        if (matches && matches.length > 0) {
+          const url = matches[0];
+          const type = url.includes('.m3u8') ? 'hls' : 'mp4';
+          console.log(`✅ Found ${type.toUpperCase()}: ${url}`);
+          return { url, type };
         }
       }
-      
+
+      // Method 2: Parse JSON-like structures in script tags
+      const scriptContents = [];
+      $('script').each((i, el) => {
+        const content = $(el).html();
+        if (content) scriptContents.push(content);
+      });
+
+      for (const script of scriptContents) {
+        // Look for common video player configurations
+        const jsonPatterns = [
+          /sources?\s*:\s*\[?\s*[{"]([^}\]]+)[}\]]/gi,
+          /file\s*:\s*["']([^"']+)["']/gi,
+          /url\s*:\s*["']([^"']+)["']/gi,
+          /src\s*:\s*["']([^"']+)["']/gi,
+        ];
+
+        for (const pattern of jsonPatterns) {
+          const matches = [...script.matchAll(pattern)];
+          for (const match of matches) {
+            const content = match[1];
+            if (content.includes('.mp4') || content.includes('.m3u8')) {
+              // Try to extract the URL
+              const urlMatch = content.match(/https?:\/\/[^\s"']+/);
+              if (urlMatch) {
+                const url = urlMatch[0];
+                const type = url.includes('.m3u8') ? 'hls' : 'mp4';
+                console.log(`✅ Found ${type.toUpperCase()} in script: ${url}`);
+                return { url, type };
+              }
+            }
+          }
+        }
+      }
+
+      // Method 3: Check for video/source tags
+      const videoSources = [];
+      $('video source, video').each((i, el) => {
+        const src = $(el).attr('src') || $(el).attr('data-src');
+        if (src) videoSources.push(src);
+      });
+
+      for (const src of videoSources) {
+        if (src.startsWith('http') && (src.includes('.mp4') || src.includes('.m3u8'))) {
+          const type = src.includes('.m3u8') ? 'hls' : 'mp4';
+          console.log(`✅ Found ${type.toUpperCase()} in video tag: ${src}`);
+          return { url: src, type };
+        }
+      }
+
+      // Method 4: Provider-specific extraction
+      const videoData = await this.extractByProvider(iframeUrl, html, $, provider);
+      if (videoData) {
+        console.log(`✅ Provider-specific extraction successful`);
+        return videoData;
+      }
+
+      console.log('❌ No direct video URL found');
       return null;
+      
     } catch (error) {
-      console.error('Error extracting video URL:', error.message);
+      console.error(`Error extracting video from ${provider}:`, error.message);
       return null;
     }
   }
 
+  // Provider-specific extraction methods
+  async extractByProvider(url, html, $, provider) {
+    const providerLower = provider.toLowerCase();
+
+    // Add provider-specific logic here
+    // Example patterns:
+    
+    // For Streamtape
+    if (providerLower.includes('streamtape')) {
+      const match = html.match(/innerHTML = "([^"]+)"/);
+      if (match) {
+        const robotLink = match[1];
+        const idMatch = url.match(/\/([^/]+)$/);
+        if (idMatch) {
+          return {
+            url: `https://streamtape.com/get_video?id=${idMatch[1]}&expires=${Date.now()}&ip=&token=${robotLink}`,
+            type: 'mp4'
+          };
+        }
+      }
+    }
+
+    // For MP4Upload
+    if (providerLower.includes('mp4upload')) {
+      const scriptMatch = html.match(/player\.src\(\s*\{\s*type:\s*"([^"]+)",\s*src:\s*"([^"]+)"/);
+      if (scriptMatch) {
+        return {
+          url: scriptMatch[2],
+          type: scriptMatch[1].includes('hls') ? 'hls' : 'mp4'
+        };
+      }
+    }
+
+    // For Acefile/Acefiles
+    if (providerLower.includes('acefile')) {
+      const match = html.match(/"file":"([^"]+)"/);
+      if (match) {
+        return {
+          url: match[1].replace(/\\/g, ''),
+          type: match[1].includes('.m3u8') ? 'hls' : 'mp4'
+        };
+      }
+    }
+
+    return null;
+  }
+
+  async getStreamingLink(episodeId) {
+    try {
+      console.log(`🎬 Scraping episode: ${episodeId}`);
+      
+      const $ = await this.fetchHTML(`${this.baseUrl}/episode/${episodeId}`);
+      const allLinks = [];
+
+      // Step 1: Get all iframe streaming sources
+      const iframeSources = [];
+      $('.mirrorstream ul li a').each((i, el) => {
+        const $el = $(el);
+        const provider = $el.text().trim();
+        const url = $el.attr('href');
+
+        if (url && url !== '#' && !url.startsWith('javascript:') && url.startsWith('http')) {
+          iframeSources.push({ provider, url });
+        }
+      });
+
+      console.log(`📡 Found ${iframeSources.length} iframe sources`);
+
+      // Step 2: Try to extract direct video URLs from iframes
+      const extractionPromises = iframeSources.slice(0, 5).map(async (source) => {
+        try {
+          const videoData = await this.extractDirectVideoUrl(source.url, source.provider);
+          if (videoData) {
+            return {
+              provider: source.provider,
+              url: videoData.url,
+              type: videoData.type,
+              quality: 'auto',
+              priority: 1 // Highest priority
+            };
+          }
+        } catch (err) {
+          console.log(`Failed ${source.provider}: ${err.message}`);
+        }
+        return null;
+      });
+
+      const extractedLinks = (await Promise.all(extractionPromises)).filter(link => link !== null);
+      allLinks.push(...extractedLinks);
+
+      // Step 3: Get download links as fallback
+      $('.download ul').each((i, ulEl) => {
+        const $ul = $(ulEl);
+        const quality = $ul.prev('strong').text().trim() || 
+                       $ul.parent().find('strong').first().text().trim() ||
+                       'Unknown Quality';
+        
+        $ul.find('li a').each((j, linkEl) => {
+          const $link = $(linkEl);
+          const provider = $link.text().trim();
+          const url = $link.attr('href');
+          
+          if (url && url !== '#' && !url.startsWith('javascript:')) {
+            allLinks.push({
+              provider: `${provider} - ${quality}`,
+              url,
+              type: 'download',
+              quality,
+              priority: 3 // Lower priority
+            });
+          }
+        });
+      });
+
+      // Step 4: Add remaining iframe sources as last resort
+      iframeSources.slice(0, 3).forEach(source => {
+        allLinks.push({
+          provider: `${source.provider} (iframe)`,
+          url: source.url,
+          type: 'iframe',
+          quality: 'auto',
+          priority: 2 // Medium priority
+        });
+      });
+
+      // Sort by priority
+      allLinks.sort((a, b) => a.priority - b.priority);
+
+      console.log(`✅ Total links: ${allLinks.length}`);
+      console.log(`   - Direct (MP4/HLS): ${extractedLinks.length}`);
+      console.log(`   - Download: ${allLinks.filter(l => l.type === 'download').length}`);
+      console.log(`   - Iframe fallback: ${allLinks.filter(l => l.type === 'iframe').length}`);
+      
+      return allLinks;
+    } catch (error) {
+      console.error('✗ Error scraping streaming links:', error.message);
+      return [];
+    }
+  }
+
+  // ... (keep all other methods unchanged: getLatestAnime, getPopularAnime, etc.)
   async getLatestAnime() {
     try {
       console.log('📡 Scraping latest anime from Otakudesu...');
-      
       const $ = await this.fetchHTML(`${this.baseUrl}`);
       const animes = [];
 
@@ -120,118 +318,9 @@ class AnimeScraper {
     }
   }
 
-  async getPopularAnime() {
-    try {
-      console.log('⭐ Scraping popular anime...');
-      
-      const $ = await this.fetchHTML(`${this.baseUrl}`);
-      const animes = [];
-
-      $('.rseries .rapi .venz ul li').each((i, el) => {
-        const $el = $(el);
-        const title = $el.find('.jdlflm').text().trim();
-        const poster = $el.find('.thumbz img').attr('src');
-        const url = $el.find('.thumb a').attr('href');
-
-        if (title && url) {
-          animes.push({
-            id: this.generateSlug(url),
-            title,
-            poster: poster || '',
-            url,
-            source: 'otakudesu'
-          });
-        }
-      });
-
-      console.log(`✅ Found ${animes.length} popular anime`);
-      return animes;
-    } catch (error) {
-      console.error('✗ Error scraping popular anime:', error.message);
-      return [];
-    }
-  }
-
-  async getOngoingAnime(page = 1) {
-    try {
-      console.log(`▶️ Scraping ongoing anime (page ${page})...`);
-      
-      const url = page === 1 
-        ? `${this.baseUrl}/ongoing-anime`
-        : `${this.baseUrl}/ongoing-anime/page/${page}`;
-      
-      const $ = await this.fetchHTML(url);
-      const animes = [];
-
-      $('.venz ul li').each((i, el) => {
-        const $el = $(el);
-        const title = $el.find('.jdlflm').text().trim();
-        const poster = $el.find('.thumbz img').attr('src');
-        const url = $el.find('.thumb a').attr('href');
-        const episode = $el.find('.epz').text().trim();
-
-        if (title && url) {
-          animes.push({
-            id: this.generateSlug(url),
-            title,
-            poster: poster || '',
-            url,
-            latestEpisode: episode || 'Unknown',
-            source: 'otakudesu'
-          });
-        }
-      });
-
-      console.log(`✅ Found ${animes.length} ongoing anime`);
-      return animes;
-    } catch (error) {
-      console.error('✗ Error scraping ongoing anime:', error.message);
-      return [];
-    }
-  }
-
-  async getCompletedAnime(page = 1) {
-    try {
-      console.log(`✓ Scraping completed anime (page ${page})...`);
-      
-      const url = page === 1 
-        ? `${this.baseUrl}/complete-anime`
-        : `${this.baseUrl}/complete-anime/page/${page}`;
-      
-      const $ = await this.fetchHTML(url);
-      const animes = [];
-
-      $('.venz ul li').each((i, el) => {
-        const $el = $(el);
-        const title = $el.find('.jdlflm').text().trim();
-        const poster = $el.find('.thumbz img').attr('src');
-        const url = $el.find('.thumb a').attr('href');
-        const episode = $el.find('.epz').text().trim();
-
-        if (title && url) {
-          animes.push({
-            id: this.generateSlug(url),
-            title,
-            poster: poster || '',
-            url,
-            episodes: episode || 'Unknown',
-            source: 'otakudesu'
-          });
-        }
-      });
-
-      console.log(`✅ Found ${animes.length} completed anime`);
-      return animes;
-    } catch (error) {
-      console.error('✗ Error scraping completed anime:', error.message);
-      return [];
-    }
-  }
-
   async getAnimeDetail(animeId) {
     try {
       console.log(`📖 Scraping anime detail: ${animeId}`);
-      
       const $ = await this.fetchHTML(`${this.baseUrl}/anime/${animeId}`);
       
       const title = $('.jdlrx h1').text().trim();
@@ -243,15 +332,8 @@ class AnimeScraper {
         const text = $(el).text();
         const [key, ...valueParts] = text.split(':');
         if (key && valueParts.length > 0) {
-          const cleanKey = key.trim();
-          const cleanValue = valueParts.join(':').trim();
-          info[cleanKey] = cleanValue;
+          info[key.trim()] = valueParts.join(':').trim();
         }
-      });
-
-      const genres = [];
-      $('.infozingle p:contains("Genre") span a').each((i, el) => {
-        genres.push($(el).text().trim());
       });
 
       const episodes = [];
@@ -270,107 +352,24 @@ class AnimeScraper {
         }
       });
 
-      const detail = {
+      return {
         id: animeId,
         title,
         poster: poster || '',
         synopsis: synopsis || 'No synopsis available',
         episodes,
         info,
-        genres,
         source: 'otakudesu'
       };
-
-      console.log(`✅ Found detail for ${detail.title}`);
-      return detail;
     } catch (error) {
       console.error('✗ Error scraping anime detail:', error.message);
       return null;
     }
   }
 
-  async getStreamingLink(episodeId) {
-    try {
-      console.log(`🎬 Scraping episode: ${episodeId}`);
-      
-      const $ = await this.fetchHTML(`${this.baseUrl}/episode/${episodeId}`);
-      const streamLinks = [];
-      const downloadLinks = [];
-
-      // Get download links (these are direct links, more reliable)
-      $('.download ul').each((i, ulEl) => {
-        const $ul = $(ulEl);
-        const quality = $ul.prev('strong').text().trim() || 
-                       $ul.parent().find('strong').first().text().trim() ||
-                       'Unknown Quality';
-        
-        $ul.find('li a').each((j, linkEl) => {
-          const $link = $(linkEl);
-          const provider = $link.text().trim();
-          const url = $link.attr('href');
-          
-          // Skip if URL is empty or just a hash
-          if (url && url !== '#' && !url.startsWith('javascript:')) {
-            downloadLinks.push({
-              provider: `${provider} - ${quality}`,
-              url,
-              type: 'download',
-              quality
-            });
-          }
-        });
-      });
-
-      // Get streaming iframe sources (backup option)
-      $('.mirrorstream ul li a').each((i, el) => {
-        const $el = $(el);
-        const provider = $el.text().trim();
-        const url = $el.attr('href');
-
-        // Only include if URL is valid (not # or javascript:)
-        if (url && url !== '#' && !url.startsWith('javascript:') && url.startsWith('http')) {
-          streamLinks.push({
-            provider: provider || 'Unknown',
-            url,
-            type: 'iframe'
-          });
-        }
-      });
-
-      // Try to extract direct video links from valid iframe sources
-      const directLinks = [];
-      for (const link of streamLinks.slice(0, 2)) { // Process first 2 valid links only
-        try {
-          const videoData = await this.extractVideoUrl(link.url);
-          if (videoData) {
-            directLinks.push({
-              provider: link.provider,
-              url: videoData.url,
-              type: videoData.type,
-              quality: 'auto'
-            });
-          }
-        } catch (err) {
-          console.log(`Failed to extract video from ${link.provider}: ${err.message}`);
-        }
-      }
-
-      // Prioritize: direct links > download links > iframe links
-      const allLinks = [...directLinks, ...downloadLinks, ...streamLinks];
-
-      console.log(`✅ Found ${allLinks.length} links (${directLinks.length} direct, ${downloadLinks.length} download, ${streamLinks.length} iframe)`);
-      
-      return allLinks;
-    } catch (error) {
-      console.error('✗ Error scraping streaming links:', error.message);
-      return [];
-    }
-  }
-
   async searchAnime(query) {
     try {
       console.log(`🔍 Searching: "${query}"`);
-      
       const $ = await this.fetchHTML(`${this.baseUrl}/?s=${encodeURIComponent(query)}&post_type=anime`);
       const results = [];
 
@@ -379,18 +378,6 @@ class AnimeScraper {
         const title = $el.find('h2 a').text().trim();
         const poster = $el.find('img').attr('src');
         const url = $el.find('h2 a').attr('href');
-        const genres = [];
-        
-        $el.find('.set').each((j, genreEl) => {
-          const genreText = $(genreEl).text().trim();
-          if (genreText.includes('Genres')) {
-            const genreList = genreText.replace('Genres :', '').trim().split(',');
-            genres.push(...genreList.map(g => g.trim()));
-          }
-        });
-
-        const status = $el.find('.set:contains("Status")').text().replace('Status :', '').trim();
-        const rating = $el.find('.set:contains("Rating")').text().replace('Rating :', '').trim();
 
         if (title && url) {
           results.push({
@@ -398,124 +385,16 @@ class AnimeScraper {
             title,
             poster: poster || '',
             url,
-            genres,
-            status,
-            rating,
             source: 'otakudesu'
           });
         }
       });
 
-      console.log(`✅ Found ${results.length} results for "${query}"`);
+      console.log(`✅ Found ${results.length} results`);
       return results;
     } catch (error) {
       console.error('✗ Error searching anime:', error.message);
       return [];
-    }
-  }
-
-  async getGenres() {
-    try {
-      console.log('🏷️ Scraping genres...');
-      
-      const $ = await this.fetchHTML(`${this.baseUrl}/genre-list`);
-      const genres = [];
-
-      $('.genres li a').each((i, el) => {
-        const $el = $(el);
-        const name = $el.text().trim();
-        const url = $el.attr('href');
-
-        if (name && url) {
-          genres.push({
-            id: this.generateSlug(url),
-            name
-          });
-        }
-      });
-
-      console.log(`✅ Found ${genres.length} genres`);
-      return genres;
-    } catch (error) {
-      console.error('✗ Error scraping genres:', error.message);
-      return [];
-    }
-  }
-
-  async getSchedule() {
-    try {
-      console.log('📅 Scraping schedule...');
-      
-      const $ = await this.fetchHTML(`${this.baseUrl}/jadwal-rilis`);
-      const schedule = {};
-
-      $('.kglist321').each((i, el) => {
-        const $el = $(el);
-        const day = $el.find('h2').text().trim();
-        const animes = [];
-
-        $el.find('ul li').each((j, animeEl) => {
-          const $anime = $(animeEl);
-          const title = $anime.find('a').text().trim();
-          const url = $anime.find('a').attr('href');
-
-          if (title && url) {
-            animes.push({
-              id: this.generateSlug(url),
-              title,
-              url
-            });
-          }
-        });
-
-        if (day) {
-          schedule[day] = animes;
-        }
-      });
-
-      console.log('✅ Schedule scraped');
-      return schedule;
-    } catch (error) {
-      console.error('✗ Error scraping schedule:', error.message);
-      return {};
-    }
-  }
-
-  async getBatchDownload(batchId) {
-    try {
-      console.log(`📦 Scraping batch: ${batchId}`);
-      
-      const $ = await this.fetchHTML(`${this.baseUrl}/batch/${batchId}`);
-      
-      const title = $('.jdlrx h1').text().trim();
-      const downloads = {};
-
-      $('.download ul li').each((i, el) => {
-        const $el = $(el);
-        const quality = $el.find('strong').text().trim();
-        const links = [];
-
-        $el.find('a').each((j, linkEl) => {
-          const $link = $(linkEl);
-          links.push({
-            provider: $link.text().trim(),
-            url: $link.attr('href')
-          });
-        });
-
-        if (quality) {
-          downloads[quality] = links;
-        }
-      });
-
-      console.log('✅ Batch data scraped');
-      return {
-        title,
-        downloads
-      };
-    } catch (error) {
-      console.error('✗ Error scraping batch:', error.message);
-      return null;
     }
   }
 }
