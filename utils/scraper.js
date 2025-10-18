@@ -1,4 +1,4 @@
-// utils/scraper.js - Fixed Iframe Detection
+// utils/scraper.js - Enhanced Video Extraction with Deep Blogger Support
 const axios = require('axios');
 const cheerio = require('cheerio');
 
@@ -32,10 +32,99 @@ class AnimeScraper {
     return parts[parts.length - 1] || '';
   }
 
-  // Extract direct video URL from iframe sources
-  async extractDirectVideoUrl(iframeUrl, provider) {
+  // ENHANCED: Extract Blogger video with multiple methods
+  async extractBloggerVideo(url) {
     try {
-      console.log(`🎬 Extracting from ${provider}: ${iframeUrl}`);
+      console.log('🎯 Extracting Blogger video...');
+      
+      const response = await this.api.get(url, {
+        headers: {
+          'Referer': 'https://desustream.info/',
+          'Accept': '*/*'
+        }
+      });
+      
+      const html = response.data;
+      
+      // Method 1: Direct progressive_url (most reliable)
+      const progressiveMatch = html.match(/"progressive_url":"([^"]+)"/);
+      if (progressiveMatch) {
+        const videoUrl = progressiveMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+        console.log('✅ Found progressive_url');
+        return { url: videoUrl, type: 'mp4' };
+      }
+
+      // Method 2: streams array
+      const streamsMatch = html.match(/"streams":\s*\[([^\]]+)\]/);
+      if (streamsMatch) {
+        try {
+          const streamsJson = streamsMatch[1];
+          const urlMatch = streamsJson.match(/"play_url":"([^"]+)"/);
+          if (urlMatch) {
+            const videoUrl = urlMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+            console.log('✅ Found play_url from streams');
+            return { url: videoUrl, type: 'mp4' };
+          }
+        } catch (e) {
+          console.log('Failed parsing streams');
+        }
+      }
+
+      // Method 3: iurl (image URL pattern to video URL)
+      const iurlMatch = html.match(/"iurl":"([^"]+)"/);
+      if (iurlMatch) {
+        const imageUrl = iurlMatch[1].replace(/\\/g, '');
+        // Convert image URL pattern to video URL
+        const videoUrl = imageUrl
+          .replace('/vi/', '/videoplayback?')
+          .replace(/\/[^\/]+\.jpg.*$/, '');
+        
+        if (videoUrl.includes('videoplayback')) {
+          console.log('✅ Converted iurl to video URL');
+          return { url: videoUrl, type: 'mp4' };
+        }
+      }
+
+      // Method 4: Extract from any video URL pattern
+      const videoPatterns = [
+        /"url":"(https?:\/\/[^"]*\.googlevideo\.com[^"]*videoplayback[^"]*)"/g,
+        /"play_url":"([^"]+)"/g,
+        /"stream_url":"([^"]+)"/g,
+      ];
+
+      for (const pattern of videoPatterns) {
+        const matches = [...html.matchAll(pattern)];
+        for (const match of matches) {
+          let videoUrl = match[1];
+          videoUrl = videoUrl
+            .replace(/\\u0026/g, '&')
+            .replace(/\\/g, '')
+            .replace(/\\"/g, '"');
+          
+          if (videoUrl.includes('googlevideo.com') || videoUrl.includes('videoplayback')) {
+            console.log('✅ Found video URL via pattern match');
+            return { url: videoUrl, type: 'mp4' };
+          }
+        }
+      }
+
+      console.log('❌ No Blogger video URL found');
+      return null;
+    } catch (error) {
+      console.error('Error extracting Blogger:', error.message);
+      return null;
+    }
+  }
+
+  // ENHANCED: Extract direct video URL with recursive depth
+  async extractDirectVideoUrl(iframeUrl, provider, depth = 0) {
+    try {
+      if (depth > 3) {
+        console.log('⚠️ Max recursion depth reached');
+        return null;
+      }
+
+      console.log(`${'  '.repeat(depth)}🎬 Extracting [${provider}]`);
       
       // Skip download/shortener links
       const skipPatterns = [
@@ -46,7 +135,7 @@ class AnimeScraper {
       ];
       
       if (skipPatterns.some(pattern => iframeUrl.includes(pattern))) {
-        console.log('⏭️ Skipping shortener/download link');
+        console.log(`${'  '.repeat(depth)}⏭️ Skipping shortener/download link`);
         return null;
       }
 
@@ -62,43 +151,65 @@ class AnimeScraper {
       const html = response.data;
       const $ = cheerio.load(html);
 
-      // Method 0: Provider-specific FIRST (more reliable)
+      // PRIORITY 1: Blogger video (most common on Otakudesu)
+      if (iframeUrl.includes('blogger.com/video') || iframeUrl.includes('blogspot.com')) {
+        const bloggerResult = await this.extractBloggerVideo(iframeUrl);
+        if (bloggerResult) {
+          console.log(`${'  '.repeat(depth)}✅ Blogger extraction successful`);
+          return bloggerResult;
+        }
+      }
+
+      // PRIORITY 2: Provider-specific extractors
       const providerData = await this.extractByProvider(iframeUrl, html, $, provider);
       if (providerData) {
-        console.log(`✅ Provider-specific extraction successful`);
+        console.log(`${'  '.repeat(depth)}✅ Provider-specific extraction successful`);
         return providerData;
       }
 
-      // Method 1: Aggressive regex for video URLs (more patterns)
+      // PRIORITY 3: Look for nested iframes FIRST
+      const nestedIframes = [];
+      $('iframe[src]').each((i, el) => {
+        const src = $(el).attr('src');
+        if (src && src.startsWith('http') && src !== iframeUrl) {
+          nestedIframes.push(src);
+        }
+      });
+
+      // Try nested iframes recursively
+      for (const nestedUrl of nestedIframes.slice(0, 2)) {
+        console.log(`${'  '.repeat(depth)}🔄 Found nested iframe`);
+        const result = await this.extractDirectVideoUrl(
+          nestedUrl, 
+          `${provider} (nested)`, 
+          depth + 1
+        );
+        if (result) return result;
+      }
+
+      // PRIORITY 4: Aggressive regex for direct video URLs
       const videoPatterns = [
-        // Standard video extensions
+        /https?:\/\/[^"'\s<>]*googlevideo\.com[^"'\s<>]*videoplayback[^"'\s<>]*/gi,
         /https?:\/\/[^"'\s<>]+\.mp4(?:[?#][^"'\s<>]*)?/gi,
         /https?:\/\/[^"'\s<>]+\.m3u8(?:[?#][^"'\s<>]*)?/gi,
-        // CDN patterns
-        /https?:\/\/[^"'\s<>]*(?:stream|video|cdn|media|content|embed|player)[^"'\s<>]*\.(?:mp4|m3u8)/gi,
-        // Quality patterns (360p, 480p, etc)
-        /https?:\/\/[^"'\s<>]*(?:\d{3,4}p?)[^"'\s<>]*\.(?:mp4|m3u8)/gi,
-        // Generic video hosting patterns
-        /https?:\/\/[a-z0-9.-]+\/[^"'\s<>]*(?:video|stream|watch|play)[^"'\s<>]*\.(?:mp4|m3u8)/gi,
+        /https?:\/\/[^"'\s<>]*(?:stream|video|cdn|media)[^"'\s<>]*\.(?:mp4|m3u8)/gi,
       ];
 
       for (const pattern of videoPatterns) {
         const matches = html.match(pattern);
         if (matches && matches.length > 0) {
-          // Get unique URLs
           const uniqueUrls = [...new Set(matches)];
           for (const url of uniqueUrls) {
-            // Validate URL
             if (this.isValidVideoUrl(url)) {
               const type = url.includes('.m3u8') ? 'hls' : 'mp4';
-              console.log(`✅ Found ${type.toUpperCase()}: ${url.substring(0, 60)}...`);
+              console.log(`${'  '.repeat(depth)}✅ Found ${type.toUpperCase()} via regex`);
               return { url, type };
             }
           }
         }
       }
 
-      // Method 2: Deep script analysis
+      // PRIORITY 5: Deep script analysis
       const scriptContents = [];
       $('script').each((i, el) => {
         const content = $(el).html();
@@ -106,7 +217,7 @@ class AnimeScraper {
       });
 
       for (const script of scriptContents) {
-        // Look for base64 encoded data
+        // Base64 decode
         const base64Match = script.match(/atob\(['"]([A-Za-z0-9+/=]+)['"]\)/);
         if (base64Match) {
           try {
@@ -115,7 +226,7 @@ class AnimeScraper {
             if (videoUrl) {
               const url = videoUrl[0];
               const type = url.includes('.m3u8') ? 'hls' : 'mp4';
-              console.log(`✅ Found ${type.toUpperCase()} in base64`);
+              console.log(`${'  '.repeat(depth)}✅ Found ${type.toUpperCase()} in base64`);
               return { url, type };
             }
           } catch (e) {
@@ -125,28 +236,23 @@ class AnimeScraper {
 
         // Enhanced JSON patterns
         const jsonPatterns = [
-          // Standard formats
           /sources?\s*:\s*\[\s*\{[^}]*(?:file|src|url)\s*:\s*["']([^"']+)["']/gi,
           /file\s*:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
           /url\s*:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
-          /src\s*:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
-          // Player configs
-          /player\.source\s*=\s*["']([^"']+)["']/gi,
-          /player\.load\(['"]([^"']+)["']\)/gi,
-          /video_url\s*[:=]\s*["']([^"']+)["']/gi,
-          /stream_url\s*[:=]\s*["']([^"']+)["']/gi,
+          /progressive_url["']?\s*:\s*["']([^"']+)["']/gi,
+          /play_url["']?\s*:\s*["']([^"']+)["']/gi,
         ];
 
         for (const pattern of jsonPatterns) {
           const matches = [...script.matchAll(pattern)];
           for (const match of matches) {
             const content = match[1];
-            if (content && (content.includes('.mp4') || content.includes('.m3u8'))) {
+            if (content && (content.includes('.mp4') || content.includes('.m3u8') || content.includes('videoplayback'))) {
               const urlMatch = content.match(/https?:\/\/[^\s"']+/);
               if (urlMatch && this.isValidVideoUrl(urlMatch[0])) {
-                const url = urlMatch[0];
+                const url = urlMatch[0].replace(/\\u0026/g, '&').replace(/\\/g, '');
                 const type = url.includes('.m3u8') ? 'hls' : 'mp4';
-                console.log(`✅ Found ${type.toUpperCase()} in script config`);
+                console.log(`${'  '.repeat(depth)}✅ Found ${type.toUpperCase()} in script config`);
                 return { url, type };
               }
             }
@@ -154,9 +260,9 @@ class AnimeScraper {
         }
       }
 
-      // Method 3: Video/source tags with all attributes
+      // PRIORITY 6: Video/source tags
       const videoSources = [];
-      $('video, source, iframe').each((i, el) => {
+      $('video, source').each((i, el) => {
         const $el = $(el);
         const attrs = ['src', 'data-src', 'data-url', 'data-file', 'data-video'];
         for (const attr of attrs) {
@@ -168,30 +274,21 @@ class AnimeScraper {
       for (const src of videoSources) {
         if (src.startsWith('http') && (src.includes('.mp4') || src.includes('.m3u8'))) {
           const type = src.includes('.m3u8') ? 'hls' : 'mp4';
-          console.log(`✅ Found ${type.toUpperCase()} in video tag`);
+          console.log(`${'  '.repeat(depth)}✅ Found ${type.toUpperCase()} in video tag`);
           return { url: src, type };
         }
       }
 
-      // Method 4: Look for nested iframes
-      const nestedIframe = $('iframe[src]').first().attr('src');
-      if (nestedIframe && nestedIframe.startsWith('http') && nestedIframe !== iframeUrl) {
-        console.log(`🔄 Found nested iframe, extracting...`);
-        return await this.extractDirectVideoUrl(nestedIframe, `${provider} (nested)`);
-      }
-
-      console.log('❌ No direct video found');
+      console.log(`${'  '.repeat(depth)}❌ No direct video found`);
       return null;
       
     } catch (error) {
-      console.error(`Error extracting ${provider}:`, error.message);
+      console.error(`${'  '.repeat(depth)}Error extracting ${provider}:`, error.message);
       return null;
     }
   }
 
-  // Validate if URL is a proper video URL
   isValidVideoUrl(url) {
-    // Remove obvious false positives
     const invalidPatterns = [
       'logo', 'icon', 'thumb', 'preview', 'banner', 
       'ad', 'analytics', 'track', 'pixel',
@@ -204,41 +301,10 @@ class AnimeScraper {
   async extractByProvider(url, html, $, provider) {
     const providerLower = provider.toLowerCase();
 
-    // Blogger.com video embed
-    if (url.includes('blogger.com/video') || url.includes('blogspot.com')) {
-      console.log('🎯 Blogger video detected');
-      
-      // Extract token from URL
-      const tokenMatch = url.match(/token=([^&]+)/);
-      if (tokenMatch) {
-        // Try to find video URL in response
-        const videoPatterns = [
-          /"url":"([^"]+\.mp4[^"]*)"/g,
-          /"video_url":"([^"]+)"/g,
-          /progressive_url[^:]*:\s*"([^"]+)"/g,
-        ];
-        
-        for (const pattern of videoPatterns) {
-          const matches = [...html.matchAll(pattern)];
-          for (const match of matches) {
-            let videoUrl = match[1];
-            videoUrl = videoUrl.replace(/\\/g, '');
-            if (videoUrl.includes('.mp4') || videoUrl.includes('.m3u8')) {
-              return {
-                url: videoUrl,
-                type: videoUrl.includes('.m3u8') ? 'hls' : 'mp4'
-              };
-            }
-          }
-        }
-      }
-    }
-
-    // DesuStream - Custom extraction for otakudesu's player
+    // DesuStream
     if (url.includes('desustream.info') || providerLower.includes('desustream')) {
-      console.log('🎯 Desustream detected, using custom extractor');
+      console.log('🎯 Desustream detected');
       
-      // Try to find direct video URL in various formats
       const patterns = [
         /"file":"([^"]+)"/g,
         /'file':'([^']+)'/g,
@@ -250,9 +316,7 @@ class AnimeScraper {
       for (const pattern of patterns) {
         const matches = [...html.matchAll(pattern)];
         for (const match of matches) {
-          let videoUrl = match[1];
-          // Unescape if needed
-          videoUrl = videoUrl.replace(/\\/g, '');
+          let videoUrl = match[1].replace(/\\/g, '');
           if (videoUrl.includes('.mp4') || videoUrl.includes('.m3u8')) {
             return {
               url: videoUrl,
@@ -266,15 +330,11 @@ class AnimeScraper {
     // Streamtape
     if (providerLower.includes('streamtape') || url.includes('streamtape')) {
       const robotMatch = html.match(/getElementById\('robotlink'\)\.innerHTML = '([^']+)'/);
-      const tokenMatch = html.match(/token=([^&'"]+)/);
+      const idMatch = url.match(/\/e\/([^/?]+)/);
       
-      if (robotMatch) {
-        const robotLink = robotMatch[1];
-        const idMatch = url.match(/\/e\/([^/?]+)/);
-        if (idMatch) {
-          const videoUrl = `https://streamtape.com/get_video?id=${idMatch[1]}&expires=${Date.now()}&ip=&token=${robotLink}`;
-          return { url: videoUrl, type: 'mp4' };
-        }
+      if (robotMatch && idMatch) {
+        const videoUrl = `https://streamtape.com/get_video?id=${idMatch[1]}&expires=${Date.now()}&ip=&token=${robotMatch[1]}`;
+        return { url: videoUrl, type: 'mp4' };
       }
     }
 
@@ -300,7 +360,7 @@ class AnimeScraper {
       }
     }
 
-    //Filelions
+    // Filelions
     if (providerLower.includes('filelions') || url.includes('filelions')) {
       const sources = html.match(/sources:\s*\[\s*\{[^}]*file:\s*["']([^"']+)["']/);
       if (sources) {
@@ -339,15 +399,14 @@ class AnimeScraper {
 
   async getStreamingLink(episodeId) {
     try {
-      console.log(`🎬 Scraping episode: ${episodeId}`);
+      console.log(`\n🎬 Scraping episode: ${episodeId}`);
       
       const $ = await this.fetchHTML(`${this.baseUrl}/episode/${episodeId}`);
       const allLinks = [];
 
-      // FIXED: Try multiple selectors for iframe sources
+      // Collect iframe sources
       const iframeSources = [];
       
-      // Selector 1: Standard mirrorstream
       $('.mirrorstream ul li a, .mirrorstream a').each((i, el) => {
         const $el = $(el);
         const provider = $el.text().trim();
@@ -358,7 +417,6 @@ class AnimeScraper {
         }
       });
 
-      // Selector 2: Streaming section with data-content
       $('[data-content]').each((i, el) => {
         const $el = $(el);
         const content = $el.attr('data-content');
@@ -369,7 +427,6 @@ class AnimeScraper {
         }
       });
 
-      // Selector 3: Direct iframe tags
       $('iframe[src*="http"]').each((i, el) => {
         const src = $(el).attr('src');
         if (src && !src.includes('desustream.com/safelink')) {
@@ -377,17 +434,6 @@ class AnimeScraper {
             provider: `Iframe ${i + 1}`, 
             url: src 
           });
-        }
-      });
-
-      // Selector 4: Any link in streaming section
-      $('.venutama .responsive-embed-stream a, .responsive-embed-stream iframe').each((i, el) => {
-        const $el = $(el);
-        const url = $el.attr('href') || $el.attr('src');
-        const provider = $el.text().trim() || `Stream ${i + 1}`;
-        
-        if (url && url.startsWith('http') && !url.includes('desustream.com/safelink')) {
-          iframeSources.push({ provider, url });
         }
       });
 
@@ -402,16 +448,9 @@ class AnimeScraper {
       }
 
       console.log(`📡 Found ${uniqueSources.length} iframe sources`);
-      
-      if (uniqueSources.length > 0) {
-        console.log('🔍 Iframe sources found:');
-        uniqueSources.slice(0, 5).forEach((s, i) => {
-          console.log(`   ${i + 1}. ${s.provider}: ${s.url.substring(0, 50)}...`);
-        });
-      }
 
-      // Extract direct video URLs from iframes (max 5)
-      const extractionPromises = uniqueSources.slice(0, 5).map(async (source) => {
+      // Extract direct video URLs (try ALL sources)
+      const extractionPromises = uniqueSources.map(async (source) => {
         try {
           const videoData = await this.extractDirectVideoUrl(source.url, source.provider);
           if (videoData) {
@@ -420,7 +459,7 @@ class AnimeScraper {
               url: videoData.url,
               type: videoData.type,
               quality: 'auto',
-              priority: 1
+              priority: videoData.type === 'mp4' ? 1 : 2
             };
           }
         } catch (err) {
@@ -432,63 +471,24 @@ class AnimeScraper {
       const extractedLinks = (await Promise.all(extractionPromises)).filter(link => link !== null);
       allLinks.push(...extractedLinks);
 
-      // Get download links and try to extract direct MP4 URLs
-      const downloadSections = [];
-      $('.download h4').each((i, el) => {
-        const quality = $(el).text().trim();
-        downloadSections.push({ quality, element: el });
-      });
-
-      for (const section of downloadSections) {
-        const $section = $(section.element).next('ul');
-        
-        $section.find('li a').each((j, linkEl) => {
-          const $link = $(linkEl);
-          const provider = $link.text().trim();
-          const url = $link.attr('href');
-          
-          // Skip shortener links in download section
-          if (url && url !== '#' && !url.startsWith('javascript:') && 
-              !url.includes('desustream.com/safelink')) {
-            allLinks.push({
-              provider: `${provider}`,
-              url,
-              type: 'download',
-              quality: section.quality,
-              priority: 3
-            });
-          }
-        });
-      }
-
-      // Add iframe sources as fallback (only if not shorteners)
-      uniqueSources.slice(0, 3).forEach(source => {
-        if (!source.url.includes('desustream.com/safelink')) {
-          allLinks.push({
-            provider: `${source.provider} (iframe)`,
-            url: source.url,
-            type: 'iframe',
-            quality: 'auto',
-            priority: 2
-          });
-        }
-      });
-
-      // Sort by priority
+      // Sort by priority (MP4 first, then HLS)
       allLinks.sort((a, b) => a.priority - b.priority);
 
-      console.log(`✅ Total links: ${allLinks.length}`);
-      console.log(`   - Direct (MP4/HLS): ${extractedLinks.length}`);
-      console.log(`   - Iframe fallback: ${allLinks.filter(l => l.type === 'iframe').length}`);
+      console.log(`\n✅ Extraction complete:`);
+      console.log(`   - Direct MP4: ${allLinks.filter(l => l.type === 'mp4').length}`);
+      console.log(`   - Direct HLS: ${allLinks.filter(l => l.type === 'hls').length}`);
+      console.log(`   - Total playable: ${allLinks.length}`);
       
-      // Don't return download links to client
-      const filteredLinks = allLinks.filter(l => l.type !== 'download');
+      if (allLinks.length > 0) {
+        console.log(`\n🎉 FIRST PLAYABLE LINK:`);
+        console.log(`   Provider: ${allLinks[0].provider}`);
+        console.log(`   Type: ${allLinks[0].type.toUpperCase()}`);
+        console.log(`   URL: ${allLinks[0].url.substring(0, 80)}...`);
+      }
       
-      console.log(`📤 Returning ${filteredLinks.length} playable links (download links excluded)`);
-      
-      return filteredLinks;
+      return allLinks;
     } catch (error) {
-      console.error('✗ Error scraping streaming links:', error.message);
+      console.error('\n✗ Error scraping streaming links:', error.message);
       return [];
     }
   }
