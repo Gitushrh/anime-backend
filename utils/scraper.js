@@ -1,8 +1,8 @@
-// utils/scraper.js - Dengan Free Proxy Rotation
+// utils/scraper.js - Dengan Free Proxy
 const axios = require('axios');
 const cheerio = require('cheerio');
-const https = require('https');
-const http = require('http');
+const HttpProxyAgent = require('http-proxy-agent');
+const HttpsProxyAgent = require('https-proxy-agent');
 
 class AnimeScraper {
   constructor() {
@@ -20,7 +20,7 @@ class AnimeScraper {
       samehadaku: 'https://samehadaku.cc'
     };
 
-    // Free proxy list dari sslproxies.org, freeproxylists.net, dll
+    // Free proxy list (update dari https://www.sslproxies.org/)
     this.proxyList = [
       'http://103.99.8.25:80',
       'http://103.152.104.228:80',
@@ -29,63 +29,49 @@ class AnimeScraper {
       'http://185.255.46.67:80',
       'http://185.209.23.153:80',
       'http://89.38.98.122:80',
-      'http://36.94.55.178:80'
+      'http://36.94.55.178:80',
+      'http://193.194.94.82:80',
+      'http://154.236.184.75:1981'
     ];
     
     this.currentProxyIndex = 0;
   }
 
-  /**
-   * Get proxy dari list dan rotate
-   */
   getProxy() {
     const proxy = this.proxyList[this.currentProxyIndex];
     this.currentProxyIndex = (this.currentProxyIndex + 1) % this.proxyList.length;
+    console.log(`Using proxy: ${proxy}`);
     return proxy;
   }
 
-  /**
-   * Create axios dengan proxy
-   */
   createAxiosWithProxy() {
-    const proxy = this.getProxy();
+    const proxyUrl = this.getProxy();
     
-    const agent = new (require('http-proxy-agent'))(proxy);
-    const httpsAgent = new (require('https-proxy-agent'))(proxy);
-
     return axios.create({
       headers: this.headers,
       timeout: 20000,
-      httpAgent: agent,
-      httpsAgent: httpsAgent,
+      httpAgent: new HttpProxyAgent(proxyUrl),
+      httpsAgent: new HttpsProxyAgent(proxyUrl),
       maxRedirects: 5
     });
   }
 
-  /**
-   * Scrape dengan retry logic
-   */
   async scrapeWithRetry(url, maxRetries = 3) {
     for (let i = 0; i < maxRetries; i++) {
       try {
         const instance = this.createAxiosWithProxy();
-        console.log(`Attempt ${i + 1}/${maxRetries} - ${url.substring(0, 50)}...`);
+        console.log(`Attempt ${i + 1}/${maxRetries} - ${url.substring(0, 60)}...`);
         const response = await instance.get(url);
+        console.log(`Success on attempt ${i + 1}`);
         return response.data;
       } catch (error) {
         console.log(`Attempt ${i + 1} failed: ${error.message}`);
-        if (i === maxRetries - 1) {
-          throw error;
-        }
-        // Wait sebelum retry
+        if (i === maxRetries - 1) throw error;
         await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
       }
     }
   }
 
-  /**
-   * Get latest anime dari Otakudesu
-   */
   async getLatestAnimeOtakudesu() {
     try {
       const html = await this.scrapeWithRetry(`${this.sources.otakudesu}/`);
@@ -110,9 +96,7 @@ class AnimeScraper {
               source: 'otakudesu'
             });
           }
-        } catch (e) {
-          // Silent fail
-        }
+        } catch (e) {}
       });
 
       console.log(`✓ Otakudesu: Found ${animes.length} anime`);
@@ -123,9 +107,6 @@ class AnimeScraper {
     }
   }
 
-  /**
-   * Get latest anime dari Kuronime
-   */
   async getLatestAnimeKuronime() {
     try {
       const html = await this.scrapeWithRetry(`${this.sources.kuronime}/`);
@@ -150,9 +131,7 @@ class AnimeScraper {
               source: 'kuronime'
             });
           }
-        } catch (e) {
-          // Silent fail
-        }
+        } catch (e) {}
       });
 
       console.log(`✓ Kuronime: Found ${animes.length} anime`);
@@ -163,18 +142,54 @@ class AnimeScraper {
     }
   }
 
-  /**
-   * Get latest anime - with fallback
-   */
+  async getLatestAnimeSamehadaku() {
+    try {
+      const html = await this.scrapeWithRetry(`${this.sources.samehadaku}/`);
+      const $ = cheerio.load(html);
+      const animes = [];
+
+      $('.post-show article').each((index, element) => {
+        try {
+          const title = $(element).find('.title a').text().trim();
+          const url = $(element).find('.title a').attr('href');
+          const poster = $(element).find('img').attr('src');
+          const episodeText = $(element).find('.episode').text().trim();
+          
+          if (title && url) {
+            const slug = url.split('/').filter(x => x)[3];
+            animes.push({
+              id: slug,
+              title,
+              url,
+              poster: poster || 'https://via.placeholder.com/150x225?text=No+Image',
+              latestEpisode: episodeText || 'Unknown',
+              source: 'samehadaku'
+            });
+          }
+        } catch (e) {}
+      });
+
+      console.log(`✓ Samehadaku: Found ${animes.length} anime`);
+      return animes.slice(0, 20);
+    } catch (error) {
+      console.error(`✗ Samehadaku failed: ${error.message}`);
+      return [];
+    }
+  }
+
   async getLatestAnime() {
     try {
-      console.log('📡 Fetching latest anime dengan proxy...');
+      console.log('📡 Fetching latest anime...');
       
       let animes = await this.getLatestAnimeOtakudesu();
       if (animes.length > 0) return animes;
 
       console.log('Trying Kuronime...');
       animes = await this.getLatestAnimeKuronime();
+      if (animes.length > 0) return animes;
+
+      console.log('Trying Samehadaku...');
+      animes = await this.getLatestAnimeSamehadaku();
       if (animes.length > 0) return animes;
 
       console.error('❌ Semua source gagal');
@@ -185,9 +200,6 @@ class AnimeScraper {
     }
   }
 
-  /**
-   * Get anime detail
-   */
   async getAnimeDetail(slug) {
     try {
       console.log(`📖 Fetching detail: ${slug}`);
@@ -204,26 +216,19 @@ class AnimeScraper {
         genres: []
       };
 
-      // Extract info
       $('.infotype').each((index, element) => {
         try {
           const label = $(element).find('b').text().trim().replace(':', '');
           const value = $(element).text().replace(label, '').replace(':', '').trim();
-          if (label && value) {
-            detail.info[label] = value;
-          }
-        } catch (e) {
-          // Silent fail
-        }
+          if (label && value) detail.info[label] = value;
+        } catch (e) {}
       });
 
-      // Extract genres
       $('.genre-info a').each((index, element) => {
         const genre = $(element).text().trim();
         if (genre) detail.genres.push(genre);
       });
 
-      // Extract episodes
       $('.lstepsiode ul li').each((index, element) => {
         try {
           const episodeLink = $(element).find('a').attr('href');
@@ -237,9 +242,7 @@ class AnimeScraper {
               date: episodeDate || 'Unknown'
             });
           }
-        } catch (e) {
-          // Silent fail
-        }
+        } catch (e) {}
       });
 
       console.log(`✅ Found ${detail.episodes.length} episodes`);
@@ -250,9 +253,6 @@ class AnimeScraper {
     }
   }
 
-  /**
-   * Get streaming links
-   */
   async getStreamingLink(episodeUrl) {
     try {
       console.log(`🎬 Fetching streaming links...`);
@@ -261,7 +261,6 @@ class AnimeScraper {
       const $ = cheerio.load(html);
       const streamLinks = [];
 
-      // Extract iframe
       $('iframe').each((index, element) => {
         try {
           const iframeSrc = $(element).attr('src') || $(element).attr('data-src');
@@ -274,13 +273,9 @@ class AnimeScraper {
                 url: iframeSrc,
                 type: 'iframe'
               });
-            } catch (e) {
-              // Invalid URL
-            }
+            } catch (e) {}
           }
-        } catch (e) {
-          // Silent fail
-        }
+        } catch (e) {}
       });
 
       console.log(`✅ Found ${streamLinks.length} links`);
@@ -291,9 +286,6 @@ class AnimeScraper {
     }
   }
 
-  /**
-   * Search anime
-   */
   async searchAnime(query) {
     try {
       console.log(`🔍 Searching: "${query}"`);
@@ -320,9 +312,7 @@ class AnimeScraper {
               source: 'otakudesu'
             });
           }
-        } catch (e) {
-          // Silent fail
-        }
+        } catch (e) {}
       });
 
       console.log(`✅ Found ${results.length} results`);
@@ -333,9 +323,6 @@ class AnimeScraper {
     }
   }
 
-  /**
-   * Get popular anime
-   */
   async getPopularAnime() {
     try {
       console.log('⭐ Fetching popular anime...');
@@ -360,9 +347,7 @@ class AnimeScraper {
               source: 'otakudesu'
             });
           }
-        } catch (e) {
-          // Silent fail
-        }
+        } catch (e) {}
       });
 
       console.log(`✅ Found ${animes.length} popular`);
@@ -373,9 +358,6 @@ class AnimeScraper {
     }
   }
 
-  /**
-   * Get ongoing anime
-   */
   async getOngoingAnime() {
     try {
       console.log('▶️ Fetching ongoing...');
@@ -400,9 +382,7 @@ class AnimeScraper {
               source: 'otakudesu'
             });
           }
-        } catch (e) {
-          // Silent fail
-        }
+        } catch (e) {}
       });
 
       console.log(`✅ Found ${animes.length} ongoing`);
