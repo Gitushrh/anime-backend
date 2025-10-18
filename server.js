@@ -220,6 +220,26 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
+// Get genres
+app.get('/api/genres', async (req, res) => {
+  try {
+    const genres = await scraper.getGenres();
+    res.json({ success: true, count: genres.length, data: genres });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get schedule
+app.get('/api/schedule', async (req, res) => {
+  try {
+    const schedule = await scraper.getSchedule();
+    res.json({ success: true, data: schedule });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ 
