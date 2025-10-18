@@ -204,6 +204,7 @@ class AnimeScraper {
       }
 
       console.log(`${'  '.repeat(depth)}🎬 Extracting [${provider}]`);
+      console.log(`${'  '.repeat(depth)}   URL: ${iframeUrl.substring(0, 80)}...`);
       
       // Skip non-video URLs early
       if (!this.isVideoEmbedUrl(iframeUrl)) {
@@ -223,6 +224,10 @@ class AnimeScraper {
       const html = response.data;
       const $ = cheerio.load(html);
 
+      console.log(`${'  '.repeat(depth)}   HTML size: ${html.length} bytes`);
+      console.log(`${'  '.repeat(depth)}   Iframes in page: ${$('iframe').length}`);
+      console.log(`${'  '.repeat(depth)}   Scripts in page: ${$('script').length}`);
+
       // PRIORITY 1: Blogger video
       if (iframeUrl.includes('blogger.com/video') || iframeUrl.includes('blogspot.com')) {
         const bloggerResults = await this.extractBloggerVideo(iframeUrl);
@@ -236,9 +241,30 @@ class AnimeScraper {
         }
       }
 
-      // PRIORITY 2: Provider-specific
+      // PRIORITY 2: Check for nested Blogger iframe in HTML
+      const bloggerIframePattern = /<iframe[^>]+src=["']([^"']*blogger\.com\/video[^"']*|[^"']*blogspot\.com[^"']*)/gi;
+      const bloggerMatches = [...html.matchAll(bloggerIframePattern)];
+      for (const match of bloggerMatches) {
+        const bloggerUrl = match[1].replace(/&amp;/g, '&');
+        console.log(`${'  '.repeat(depth)}🔍 Found nested Blogger iframe`);
+        const bloggerResults = await this.extractBloggerVideo(bloggerUrl);
+        if (bloggerResults) {
+          if (Array.isArray(bloggerResults)) {
+            console.log(`${'  '.repeat(depth)}✅ Nested Blogger: ${bloggerResults.length} qualities`);
+            return bloggerResults;
+          }
+          console.log(`${'  '.repeat(depth)}✅ Nested Blogger successful`);
+          return [bloggerResults];
+        }
+      }
+
+      // PRIORITY 3: Provider-specific
       const providerData = await this.extractByProvider(iframeUrl, html, $, provider);
       if (providerData) {
+        if (Array.isArray(providerData)) {
+          console.log(`${'  '.repeat(depth)}✅ Provider-specific: ${providerData.length} results`);
+          return providerData;
+        }
         console.log(`${'  '.repeat(depth)}✅ Provider-specific successful`);
         return [providerData];
       }
@@ -376,22 +402,45 @@ class AnimeScraper {
   async extractByProvider(url, html, $, provider) {
     const providerLower = provider.toLowerCase();
 
-    if (url.includes('desustream.info') || providerLower.includes('desustream')) {
-      console.log('🎯 Desustream detected');
+    if (url.includes('desustream.info') || providerLower.includes('desustream') || providerLower.includes('server')) {
+      console.log('🎯 Desustream detected, analyzing...');
       
+      // Method 1: Look for Blogger iframe
+      const bloggerIframeMatch = html.match(/src=["']([^"']*blogger\.com\/video[^"']*|[^"']*blogspot\.com[^"']*)/);
+      if (bloggerIframeMatch) {
+        console.log('✅ Found Blogger iframe inside Desustream');
+        const bloggerUrl = bloggerIframeMatch[1].replace(/&amp;/g, '&');
+        const bloggerResults = await this.extractBloggerVideo(bloggerUrl);
+        if (bloggerResults && bloggerResults.length > 0) {
+          return bloggerResults;
+        }
+      }
+
+      // Method 2: Look for nested iframes
+      $('iframe[src]').each((i, el) => {
+        const src = $(el).attr('src');
+        if (src && this.isVideoEmbedUrl(src)) {
+          console.log(`✅ Found nested iframe: ${src.substring(0, 50)}...`);
+        }
+      });
+
+      // Method 3: Standard file patterns
       const patterns = [
         /"file":"([^"]+)"/g,
         /'file':'([^']+)'/g,
         /file:\s*["']([^"']+)["']/g,
         /source:\s*["']([^"']+)["']/g,
         /src:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/g,
+        /sources:\s*\[["']([^"']+)["']\]/g,
+        /"url":"([^"]+\.(?:mp4|m3u8)[^"]*)"/g,
       ];
 
       for (const pattern of patterns) {
         const matches = [...html.matchAll(pattern)];
         for (const match of matches) {
           let videoUrl = match[1].replace(/\\/g, '');
-          if (videoUrl.includes('.mp4') || videoUrl.includes('.m3u8')) {
+          if (videoUrl.includes('.mp4') || videoUrl.includes('.m3u8') || videoUrl.includes('videoplayback')) {
+            console.log(`✅ Found video URL: ${videoUrl.substring(0, 60)}...`);
             return {
               url: videoUrl,
               type: videoUrl.includes('.m3u8') ? 'hls' : 'mp4'
@@ -399,6 +448,30 @@ class AnimeScraper {
           }
         }
       }
+
+      // Method 4: Check for encoded/obfuscated URLs
+      const base64Matches = html.match(/atob\(['"]([A-Za-z0-9+/=]{20,})['"]\)/g);
+      if (base64Matches) {
+        console.log(`🔍 Found ${base64Matches.length} base64 encoded strings`);
+        for (const match of base64Matches) {
+          const base64Data = match.match(/atob\(['"]([A-Za-z0-9+/=]+)['"]\)/)[1];
+          try {
+            const decoded = Buffer.from(base64Data, 'base64').toString();
+            if (decoded.includes('http') && (decoded.includes('.mp4') || decoded.includes('.m3u8'))) {
+              const urlMatch = decoded.match(/https?:\/\/[^\s"']+/);
+              if (urlMatch) {
+                console.log(`✅ Found video in base64: ${urlMatch[0].substring(0, 60)}...`);
+                return {
+                  url: urlMatch[0],
+                  type: urlMatch[0].includes('.m3u8') ? 'hls' : 'mp4'
+                };
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      console.log('⚠️ Desustream: No video found with standard patterns');
     }
 
     if (providerLower.includes('streamtape') || url.includes('streamtape')) {
@@ -697,6 +770,74 @@ class AnimeScraper {
     } catch (error) {
       console.error('✗ Error searching anime:', error.message);
       return [];
+    }
+  }
+
+  // DEBUG METHOD: Get raw iframe HTML
+  async debugIframeUrl(iframeUrl) {
+    try {
+      console.log(`🔍 DEBUG: Fetching ${iframeUrl}`);
+      const response = await this.api.get(iframeUrl, {
+        headers: {
+          'Referer': this.baseUrl,
+          'Origin': this.baseUrl,
+          'Accept': '*/*'
+        },
+        timeout: 20000
+      });
+      
+      const html = response.data;
+      const $ = cheerio.load(html);
+      
+      // Extract useful info
+      const info = {
+        url: iframeUrl,
+        htmlLength: html.length,
+        iframeCount: $('iframe').length,
+        scriptCount: $('script').length,
+        videoCount: $('video').length,
+        iframes: [],
+        scripts: [],
+        possibleVideoUrls: []
+      };
+
+      // Get all iframes
+      $('iframe[src]').each((i, el) => {
+        info.iframes.push($(el).attr('src'));
+      });
+
+      // Get all script sources
+      $('script[src]').each((i, el) => {
+        info.scripts.push($(el).attr('src'));
+      });
+
+      // Look for video-like URLs in HTML
+      const videoPatterns = [
+        /https?:\/\/[^"'\s<>]*googlevideo\.com[^"'\s<>]*/gi,
+        /https?:\/\/[^"'\s<>]+\.mp4/gi,
+        /https?:\/\/[^"'\s<>]+\.m3u8/gi,
+        /blogger\.com\/video/gi,
+        /blogspot\.com/gi,
+      ];
+
+      for (const pattern of videoPatterns) {
+        const matches = html.match(pattern);
+        if (matches) {
+          info.possibleVideoUrls.push(...matches);
+        }
+      }
+
+      // Remove duplicates
+      info.possibleVideoUrls = [...new Set(info.possibleVideoUrls)];
+      
+      return {
+        info,
+        htmlSample: html.substring(0, 2000), // First 2000 chars
+        fullHtml: html // Full HTML for detailed inspection
+      };
+    } catch (error) {
+      console.error('DEBUG Error:', error.message);
+      return { error: error.message };
     }
   }
 }

@@ -1,4 +1,4 @@
-// server.js - Updated Backend API
+// server.js - Updated Backend API with Debug
 const express = require('express');
 const cors = require('cors');
 const AnimeScraper = require('./utils/scraper');
@@ -21,7 +21,7 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: 'Anime Scraper API is running',
-    version: '2.0.0',
+    version: '2.1.0-debug',
     source: 'otakudesu.cloud',
     endpoints: {
       latest: '/api/latest',
@@ -33,7 +33,9 @@ app.get('/', (req, res) => {
       episode: '/api/episode/:episodeId',
       batch: '/api/batch/:batchId',
       genres: '/api/genres',
-      schedule: '/api/schedule'
+      schedule: '/api/schedule',
+      debug_iframe: '/api/debug/iframe?url=...',
+      debug_episode: '/api/debug/episode/:episodeId'
     }
   });
 });
@@ -308,6 +310,155 @@ app.get('/api/schedule', async (req, res) => {
   }
 });
 
+// ==================== DEBUG ENDPOINTS ====================
+
+// DEBUG: Inspect iframe HTML
+app.get('/api/debug/iframe', async (req, res) => {
+  try {
+    const { url } = req.query;
+    
+    if (!url) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'URL parameter is required',
+        example: '/api/debug/iframe?url=https://desustream.info/...'
+      });
+    }
+    
+    console.log(`🔍 DEBUG: Inspecting ${url}`);
+    const debug = await scraper.debugIframeUrl(url);
+    
+    res.json({ 
+      success: true, 
+      data: debug
+    });
+  } catch (error) {
+    console.error('API Error /debug/iframe:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to debug iframe',
+      message: error.message
+    });
+  }
+});
+
+// DEBUG: Get episode page structure
+app.get('/api/debug/episode/:episodeId', async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const axios = require('axios');
+    const cheerio = require('cheerio');
+    
+    const url = `https://otakudesu.cloud/episode/${episodeId}`;
+    console.log(`🔍 DEBUG: Fetching episode page ${url}`);
+    
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      timeout: 30000
+    });
+    
+    const html = response.data;
+    const $ = cheerio.load(html);
+    
+    const info = {
+      url,
+      htmlLength: html.length,
+      title: $('title').text(),
+      mirrorstreamCount: $('.mirrorstream').length,
+      downloadCount: $('.download').length,
+      iframeCount: $('iframe').length,
+      
+      mirrorstreamLinks: [],
+      downloadLinks: [],
+      allIframes: [],
+      dataContent: [],
+      allClasses: []
+    };
+    
+    // Extract mirrorstream links
+    $('.mirrorstream ul li a, .mirrorstream a').each((i, el) => {
+      const $el = $(el);
+      info.mirrorstreamLinks.push({
+        index: i,
+        text: $el.text().trim(),
+        href: $el.attr('href'),
+        dataContent: $el.attr('data-content'),
+        class: $el.attr('class')
+      });
+    });
+    
+    // Extract download links
+    $('.download ul li a').each((i, el) => {
+      const $el = $(el);
+      const href = $el.attr('href');
+      if (href && !href.includes('safelink')) {
+        info.downloadLinks.push({
+          index: i,
+          text: $el.text().trim(),
+          href: href
+        });
+      }
+    });
+    
+    // Extract all iframes
+    $('iframe[src]').each((i, el) => {
+      info.allIframes.push({
+        index: i,
+        src: $(el).attr('src'),
+        class: $(el).attr('class')
+      });
+    });
+    
+    // Extract data-content
+    $('[data-content]').each((i, el) => {
+      const $el = $(el);
+      info.dataContent.push({
+        index: i,
+        text: $el.text().trim(),
+        content: $el.attr('data-content'),
+        tag: el.name,
+        class: $el.attr('class')
+      });
+    });
+    
+    // Get all unique classes
+    $('[class]').each((i, el) => {
+      const classes = $(el).attr('class');
+      if (classes) {
+        classes.split(' ').forEach(cls => {
+          if (!info.allClasses.includes(cls)) {
+            info.allClasses.push(cls);
+          }
+        });
+      }
+    });
+    
+    res.json({ 
+      success: true, 
+      data: {
+        info,
+        htmlSample: html.substring(0, 5000),
+        recommendations: {
+          message: "Check mirrorstreamLinks and downloadLinks for streaming sources",
+          nextStep: "Use /api/debug/iframe?url=... to inspect specific iframe"
+        }
+      }
+    });
+  } catch (error) {
+    console.error('API Error /debug/episode:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to debug episode',
+      message: error.message
+    });
+  }
+});
+
+// ========================================================
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ 
@@ -324,7 +475,9 @@ app.use((req, res) => {
       'GET /api/episode/:episodeId',
       'GET /api/batch/:batchId',
       'GET /api/genres',
-      'GET /api/schedule'
+      'GET /api/schedule',
+      'GET /api/debug/iframe?url=...',
+      'GET /api/debug/episode/:episodeId'
     ]
   });
 });
@@ -341,8 +494,9 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`✅ Anime Scraper API v2.0 running on port ${PORT}`);
+  console.log(`✅ Anime Scraper API v2.1-debug running on port ${PORT}`);
   console.log(`📡 Base URL: http://localhost:${PORT}`);
   console.log(`🔗 Source: otakudesu.cloud`);
   console.log(`📖 Visit http://localhost:${PORT}/ for documentation`);
+  console.log(`🔍 Debug endpoints: /api/debug/episode/:id & /api/debug/iframe?url=...`);
 });
