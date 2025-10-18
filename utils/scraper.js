@@ -21,7 +21,32 @@ class AnimeScraper {
   async initBrowser() {
     if (!this.browser) {
       console.log('🚀 Launching Puppeteer browser...');
-      this.browser = await puppeteer.launch({
+      
+      // Auto-detect Chrome/Chromium path
+      const possiblePaths = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/snap/bin/chromium',
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+      ];
+
+      let executablePath = null;
+      const fs = require('fs');
+      
+      for (const path of possiblePaths) {
+        if (path && fs.existsSync(path)) {
+          executablePath = path;
+          console.log(`✅ Found browser at: ${path}`);
+          break;
+        }
+      }
+
+      const launchOptions = {
         headless: 'new',
         args: [
           '--no-sandbox',
@@ -31,11 +56,20 @@ class AnimeScraper {
           '--no-zygote',
           '--disable-web-security',
           '--disable-features=IsolateOrigins,site-per-process',
-          '--window-size=1920,1080'
-        ],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser'
-      });
-      console.log('✅ Browser launched');
+          '--window-size=1920,1080',
+          '--disable-blink-features=AutomationControlled'
+        ]
+      };
+
+      // Only set executablePath if found
+      if (executablePath) {
+        launchOptions.executablePath = executablePath;
+      } else {
+        console.log('⚠️ No Chrome found, using Puppeteer bundled browser');
+      }
+
+      this.browser = await puppeteer.launch(launchOptions);
+      console.log('✅ Browser launched successfully');
     }
     return this.browser;
   }
@@ -380,6 +414,132 @@ class AnimeScraper {
     return !invalid.some(pattern => url.toLowerCase().includes(pattern));
   }
 
+  // FALLBACK: Aggressive Axios extraction (tanpa Puppeteer)
+  async extractWithAxios(url, depth = 0) {
+    try {
+      if (depth > 2) return null;
+
+      console.log(`${'  '.repeat(depth)}⚡ AXIOS EXTRACTION (Fallback)`);
+      console.log(`${'  '.repeat(depth)}   URL: ${url.substring(0, 80)}...`);
+
+      const response = await this.api.get(url, {
+        headers: {
+          'Referer': this.baseUrl,
+          'Origin': this.baseUrl,
+          'Accept': '*/*',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        },
+        timeout: 25000,
+        maxRedirects: 5
+      });
+
+      const html = response.data;
+      const $ = cheerio.load(html);
+
+      console.log(`${'  '.repeat(depth)}   HTML size: ${html.length} bytes`);
+
+      // PRIORITY 1: Blogger extraction
+      const bloggerData = await this.extractBloggerFromHtml(html);
+      if (bloggerData && bloggerData.length > 0) {
+        console.log(`${'  '.repeat(depth)}✅ Blogger: ${bloggerData.length} qualities`);
+        return bloggerData;
+      }
+
+      // PRIORITY 2: Check nested Blogger iframes
+      const bloggerIframePattern = /<iframe[^>]+src=["']([^"']*blogger\.com\/video[^"']*|[^"']*blogspot\.com[^"']*)/gi;
+      const bloggerMatches = [...html.matchAll(bloggerIframePattern)];
+      for (const match of bloggerMatches) {
+        const bloggerUrl = match[1].replace(/&amp;/g, '&');
+        console.log(`${'  '.repeat(depth)}🔍 Found Blogger iframe`);
+        const bloggerResults = await this.extractBloggerFromHtml(
+          await (await this.api.get(bloggerUrl)).data
+        );
+        if (bloggerResults && bloggerResults.length > 0) {
+          return bloggerResults;
+        }
+      }
+
+      // PRIORITY 3: Aggressive regex patterns
+      const patterns = [
+        // Google Video direct
+        /https?:\/\/[^"'\s<>]*googlevideo\.com[^"'\s<>]*videoplayback[^"'\s<>]*/gi,
+        // MP4 files
+        /https?:\/\/[^"'\s<>]+\.mp4(?:[?#][^"'\s<>]*)?/gi,
+        // M3U8 streams
+        /https?:\/\/[^"'\s<>]+\.m3u8(?:[?#][^"'\s<>]*)?/gi,
+        // JSON embedded URLs
+        /"(?:file|url|src|source)":\s*"([^"]+\.(?:mp4|m3u8)[^"]*)"/gi,
+        // Progressive/Play URLs
+        /"(?:progressive_url|play_url)":\s*"([^"]+)"/gi,
+      ];
+
+      for (const pattern of patterns) {
+        const matches = [...html.matchAll(pattern)];
+        for (const match of matches) {
+          let videoUrl = match[1] || match[0];
+          videoUrl = videoUrl.replace(/\\u0026/g, '&').replace(/\\/g, '');
+          
+          if (this.isValidVideoUrl(videoUrl) && videoUrl.startsWith('http')) {
+            const type = videoUrl.includes('.m3u8') ? 'hls' : 'mp4';
+            console.log(`${'  '.repeat(depth)}✅ Found ${type.toUpperCase()}: ${videoUrl.substring(0, 60)}...`);
+            return [{
+              url: videoUrl,
+              type,
+              quality: this.extractQualityFromUrl(videoUrl),
+              source: 'axios-regex'
+            }];
+          }
+        }
+      }
+
+      // PRIORITY 4: Decode base64
+      const base64Matches = [...html.matchAll(/atob\(['"]([A-Za-z0-9+/=]{30,})['"]\)/g)];
+      for (const match of base64Matches) {
+        try {
+          const decoded = Buffer.from(match[1], 'base64').toString();
+          const urlMatch = decoded.match(/https?:\/\/[^\s"']+\.(?:mp4|m3u8)/);
+          if (urlMatch) {
+            const videoUrl = urlMatch[0];
+            const type = videoUrl.includes('.m3u8') ? 'hls' : 'mp4';
+            console.log(`${'  '.repeat(depth)}✅ Found ${type.toUpperCase()} in base64`);
+            return [{
+              url: videoUrl,
+              type,
+              quality: this.extractQualityFromUrl(videoUrl),
+              source: 'axios-base64'
+            }];
+          }
+        } catch (e) {}
+      }
+
+      // PRIORITY 5: Check nested iframes (only video embeds)
+      const nestedIframes = [];
+      $('iframe[src]').each((i, el) => {
+        const src = $(el).attr('src');
+        if (src && src.startsWith('http') && this.isVideoEmbedUrl(src)) {
+          nestedIframes.push(src);
+        }
+      });
+
+      for (const nestedUrl of nestedIframes.slice(0, 2)) {
+        if (nestedUrl !== url) {
+          console.log(`${'  '.repeat(depth)}🔄 Checking nested iframe`);
+          const result = await this.extractWithAxios(nestedUrl, depth + 1);
+          if (result && result.length > 0) return result;
+        }
+      }
+
+      console.log(`${'  '.repeat(depth)}❌ No video found`);
+      return null;
+
+    } catch (error) {
+      console.error(`${'  '.repeat(depth)}Axios Error:`, error.message);
+      return null;
+    }
+  }
+
   async getStreamingLink(episodeId) {
     try {
       console.log(`\n🎬 Scraping episode: ${episodeId}`);
@@ -429,11 +589,32 @@ class AnimeScraper {
 
       console.log(`📡 Found ${unique.length} video sources`);
 
-      // Extract using Puppeteer (limit to 3 sources)
+      // Try Puppeteer first, fallback to axios if it fails
       const allLinks = [];
+      let puppeteerAvailable = true;
+
+      try {
+        await this.initBrowser();
+      } catch (error) {
+        console.log('⚠️ Puppeteer not available, using fallback methods');
+        puppeteerAvailable = false;
+      }
+
       for (const source of unique.slice(0, 3)) {
         console.log(`\n🔥 Extracting: ${source.provider}`);
-        const results = await this.extractWithPuppeteer(source.url);
+        
+        let results = null;
+        
+        if (puppeteerAvailable) {
+          try {
+            results = await this.extractWithPuppeteer(source.url);
+          } catch (error) {
+            console.log('⚠️ Puppeteer failed, trying axios fallback...');
+            results = await this.extractWithAxios(source.url);
+          }
+        } else {
+          results = await this.extractWithAxios(source.url);
+        }
         
         if (results && results.length > 0) {
           results.forEach(result => {
