@@ -1,44 +1,186 @@
-// utils/scraper.js - Menggunakan Jikan API (free, no auth needed)
+// utils/scraper.js - Dengan Free Proxy Rotation
 const axios = require('axios');
+const cheerio = require('cheerio');
+const https = require('https');
+const http = require('http');
 
 class AnimeScraper {
   constructor() {
-    this.jikanApi = axios.create({
-      baseURL: 'https://api.jikan.moe/v4',
-      timeout: 15000
+    this.headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5',
+      'DNT': '1',
+      'Connection': 'keep-alive'
+    };
+    
+    this.sources = {
+      otakudesu: 'https://otakudesu.info',
+      kuronime: 'https://kuronime.com',
+      samehadaku: 'https://samehadaku.cc'
+    };
+
+    // Free proxy list dari sslproxies.org, freeproxylists.net, dll
+    this.proxyList = [
+      'http://103.99.8.25:80',
+      'http://103.152.104.228:80',
+      'http://203.89.126.250:80',
+      'http://45.142.182.99:80',
+      'http://185.255.46.67:80',
+      'http://185.209.23.153:80',
+      'http://89.38.98.122:80',
+      'http://36.94.55.178:80'
+    ];
+    
+    this.currentProxyIndex = 0;
+  }
+
+  /**
+   * Get proxy dari list dan rotate
+   */
+  getProxy() {
+    const proxy = this.proxyList[this.currentProxyIndex];
+    this.currentProxyIndex = (this.currentProxyIndex + 1) % this.proxyList.length;
+    return proxy;
+  }
+
+  /**
+   * Create axios dengan proxy
+   */
+  createAxiosWithProxy() {
+    const proxy = this.getProxy();
+    
+    const agent = new (require('http-proxy-agent'))(proxy);
+    const httpsAgent = new (require('https-proxy-agent'))(proxy);
+
+    return axios.create({
+      headers: this.headers,
+      timeout: 20000,
+      httpAgent: agent,
+      httpsAgent: httpsAgent,
+      maxRedirects: 5
     });
   }
 
   /**
-   * Get latest anime dari Jikan API
+   * Scrape dengan retry logic
    */
-  async getLatestAnime() {
+  async scrapeWithRetry(url, maxRetries = 3) {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const instance = this.createAxiosWithProxy();
+        console.log(`Attempt ${i + 1}/${maxRetries} - ${url.substring(0, 50)}...`);
+        const response = await instance.get(url);
+        return response.data;
+      } catch (error) {
+        console.log(`Attempt ${i + 1} failed: ${error.message}`);
+        if (i === maxRetries - 1) {
+          throw error;
+        }
+        // Wait sebelum retry
+        await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
+      }
+    }
+  }
+
+  /**
+   * Get latest anime dari Otakudesu
+   */
+  async getLatestAnimeOtakudesu() {
     try {
-      console.log('📡 Fetching latest anime from Jikan API...');
-      
-      const response = await this.jikanApi.get('/anime', {
-        params: {
-          order_by: 'start_date',
-          sort: 'desc',
-          limit: 25,
-          status: 'airing'
+      const html = await this.scrapeWithRetry(`${this.sources.otakudesu}/`);
+      const $ = cheerio.load(html);
+      const animes = [];
+
+      $('.content-inner .item').each((index, element) => {
+        try {
+          const title = $(element).find('.thumb-title').text().trim();
+          const url = $(element).find('a').attr('href');
+          const poster = $(element).find('img').attr('src');
+          const episodeText = $(element).find('.ep').text().trim();
+          
+          if (title && url) {
+            const slug = url.split('/').filter(x => x).pop();
+            animes.push({
+              id: slug,
+              title,
+              url,
+              poster: poster || 'https://via.placeholder.com/150x225?text=No+Image',
+              latestEpisode: episodeText || 'Unknown',
+              source: 'otakudesu'
+            });
+          }
+        } catch (e) {
+          // Silent fail
         }
       });
 
-      const animes = response.data.data.map(anime => ({
-        id: anime.mal_id,
-        title: anime.title,
-        url: anime.url,
-        poster: anime.images.jpg.large_image_url,
-        latestEpisode: anime.aired?.from || 'Unknown',
-        synopsis: anime.synopsis || 'No synopsis',
-        source: 'jikan'
-      }));
-
-      console.log(`✅ Found ${animes.length} anime`);
-      return animes;
+      console.log(`✓ Otakudesu: Found ${animes.length} anime`);
+      return animes.slice(0, 20);
     } catch (error) {
-      console.error('✗ Error fetching latest anime:', error.message);
+      console.error(`✗ Otakudesu failed: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get latest anime dari Kuronime
+   */
+  async getLatestAnimeKuronime() {
+    try {
+      const html = await this.scrapeWithRetry(`${this.sources.kuronime}/`);
+      const $ = cheerio.load(html);
+      const animes = [];
+
+      $('.post-show article').each((index, element) => {
+        try {
+          const title = $(element).find('.title a').text().trim();
+          const url = $(element).find('.title a').attr('href');
+          const poster = $(element).find('img').attr('src');
+          const episodeText = $(element).find('.episode').text().trim();
+          
+          if (title && url) {
+            const slug = url.split('/').filter(x => x)[3];
+            animes.push({
+              id: slug,
+              title,
+              url,
+              poster: poster || 'https://via.placeholder.com/150x225?text=No+Image',
+              latestEpisode: episodeText || 'Unknown',
+              source: 'kuronime'
+            });
+          }
+        } catch (e) {
+          // Silent fail
+        }
+      });
+
+      console.log(`✓ Kuronime: Found ${animes.length} anime`);
+      return animes.slice(0, 20);
+    } catch (error) {
+      console.error(`✗ Kuronime failed: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get latest anime - with fallback
+   */
+  async getLatestAnime() {
+    try {
+      console.log('📡 Fetching latest anime dengan proxy...');
+      
+      let animes = await this.getLatestAnimeOtakudesu();
+      if (animes.length > 0) return animes;
+
+      console.log('Trying Kuronime...');
+      animes = await this.getLatestAnimeKuronime();
+      if (animes.length > 0) return animes;
+
+      console.error('❌ Semua source gagal');
+      return [];
+    } catch (error) {
+      console.error('Error getLatestAnime:', error.message);
       return [];
     }
   }
@@ -46,40 +188,106 @@ class AnimeScraper {
   /**
    * Get anime detail
    */
-  async getAnimeDetail(id) {
+  async getAnimeDetail(slug) {
     try {
-      console.log(`📖 Fetching anime detail: ${id}`);
+      console.log(`📖 Fetching detail: ${slug}`);
       
-      const response = await this.jikanApi.get(`/anime/${id}`);
-      const anime = response.data.data;
+      const html = await this.scrapeWithRetry(`${this.sources.otakudesu}/anime/${slug}`);
+      const $ = cheerio.load(html);
 
       const detail = {
-        id: anime.mal_id,
-        title: anime.title,
-        poster: anime.images.jpg.large_image_url,
-        synopsis: anime.synopsis || 'No synopsis available',
-        episodes: anime.episodes || 0,
-        status: anime.status,
-        aired: anime.aired?.string || 'Unknown',
-        source: 'jikan',
-        genres: anime.genres?.map(g => g.name) || [],
-        studios: anime.studios?.map(s => s.name) || [],
-        score: anime.score,
-        info: {
-          'Type': anime.type || 'Unknown',
-          'Episodes': anime.episodes || 'Unknown',
-          'Status': anime.status || 'Unknown',
-          'Aired': anime.aired?.string || 'Unknown',
-          'Score': anime.score || 'N/A',
-          'Studios': anime.studios?.map(s => s.name).join(', ') || 'Unknown'
-        }
+        title: $('.entry-title').text().trim() || 'Unknown',
+        poster: $('.thumb img').attr('src') || 'https://via.placeholder.com/300x450?text=No+Image',
+        synopsis: $('.entry-content p').first().text().trim() || 'No synopsis',
+        episodes: [],
+        info: {},
+        genres: []
       };
 
-      console.log(`✅ Found detail for ${detail.title}`);
+      // Extract info
+      $('.infotype').each((index, element) => {
+        try {
+          const label = $(element).find('b').text().trim().replace(':', '');
+          const value = $(element).text().replace(label, '').replace(':', '').trim();
+          if (label && value) {
+            detail.info[label] = value;
+          }
+        } catch (e) {
+          // Silent fail
+        }
+      });
+
+      // Extract genres
+      $('.genre-info a').each((index, element) => {
+        const genre = $(element).text().trim();
+        if (genre) detail.genres.push(genre);
+      });
+
+      // Extract episodes
+      $('.lstepsiode ul li').each((index, element) => {
+        try {
+          const episodeLink = $(element).find('a').attr('href');
+          const episodeNum = $(element).find('a').text().trim();
+          const episodeDate = $(element).find('.date').text().trim();
+
+          if (episodeLink && episodeNum) {
+            detail.episodes.push({
+              number: episodeNum,
+              url: episodeLink,
+              date: episodeDate || 'Unknown'
+            });
+          }
+        } catch (e) {
+          // Silent fail
+        }
+      });
+
+      console.log(`✅ Found ${detail.episodes.length} episodes`);
       return detail;
     } catch (error) {
-      console.error('✗ Error fetching anime detail:', error.message);
+      console.error(`✗ Detail fetch failed: ${error.message}`);
       return null;
+    }
+  }
+
+  /**
+   * Get streaming links
+   */
+  async getStreamingLink(episodeUrl) {
+    try {
+      console.log(`🎬 Fetching streaming links...`);
+      
+      const html = await this.scrapeWithRetry(episodeUrl);
+      const $ = cheerio.load(html);
+      const streamLinks = [];
+
+      // Extract iframe
+      $('iframe').each((index, element) => {
+        try {
+          const iframeSrc = $(element).attr('src') || $(element).attr('data-src');
+          if (iframeSrc && iframeSrc.length > 0) {
+            try {
+              const url = new URL(iframeSrc);
+              const provider = url.hostname.split('.')[0];
+              streamLinks.push({
+                provider: provider || 'unknown',
+                url: iframeSrc,
+                type: 'iframe'
+              });
+            } catch (e) {
+              // Invalid URL
+            }
+          }
+        } catch (e) {
+          // Silent fail
+        }
+      });
+
+      console.log(`✅ Found ${streamLinks.length} links`);
+      return streamLinks.slice(0, 10);
+    } catch (error) {
+      console.error(`✗ Streaming fetch failed: ${error.message}`);
+      return [];
     }
   }
 
@@ -88,28 +296,39 @@ class AnimeScraper {
    */
   async searchAnime(query) {
     try {
-      console.log(`🔍 Searching anime: "${query}"`);
+      console.log(`🔍 Searching: "${query}"`);
       
-      const response = await this.jikanApi.get('/anime', {
-        params: {
-          query: query,
-          limit: 25
+      const html = await this.scrapeWithRetry(
+        `${this.sources.otakudesu}/?s=${encodeURIComponent(query)}&post_type=anime`
+      );
+      const $ = cheerio.load(html);
+      const results = [];
+
+      $('.content-inner .item').each((index, element) => {
+        try {
+          const title = $(element).find('.thumb-title').text().trim();
+          const url = $(element).find('a').attr('href');
+          const poster = $(element).find('img').attr('src');
+          
+          if (title && url) {
+            const slug = url.split('/').filter(x => x).pop();
+            results.push({
+              id: slug,
+              title,
+              url,
+              poster: poster || 'https://via.placeholder.com/150x225?text=No+Image',
+              source: 'otakudesu'
+            });
+          }
+        } catch (e) {
+          // Silent fail
         }
       });
 
-      const results = response.data.data.map(anime => ({
-        id: anime.mal_id,
-        title: anime.title,
-        url: anime.url,
-        poster: anime.images.jpg.large_image_url,
-        synopsis: anime.synopsis || 'No synopsis',
-        source: 'jikan'
-      }));
-
-      console.log(`✅ Found ${results.length} results for "${query}"`);
+      console.log(`✅ Found ${results.length} results`);
       return results;
     } catch (error) {
-      console.error('✗ Error searching anime:', error.message);
+      console.error(`✗ Search failed: ${error.message}`);
       return [];
     }
   }
@@ -121,26 +340,35 @@ class AnimeScraper {
     try {
       console.log('⭐ Fetching popular anime...');
       
-      const response = await this.jikanApi.get('/top/anime', {
-        params: {
-          limit: 25
+      const html = await this.scrapeWithRetry(`${this.sources.otakudesu}/anime/populer-ajax/`);
+      const $ = cheerio.load(html);
+      const animes = [];
+
+      $('.item').each((index, element) => {
+        try {
+          const title = $(element).find('.thumb-title').text().trim();
+          const url = $(element).find('a').attr('href');
+          const poster = $(element).find('img').attr('src');
+          
+          if (title && url) {
+            const slug = url.split('/').filter(x => x).pop();
+            animes.push({
+              id: slug,
+              title,
+              url,
+              poster: poster || 'https://via.placeholder.com/150x225?text=No+Image',
+              source: 'otakudesu'
+            });
+          }
+        } catch (e) {
+          // Silent fail
         }
       });
 
-      const animes = response.data.data.map(anime => ({
-        id: anime.mal_id,
-        title: anime.title,
-        url: anime.url,
-        poster: anime.images.jpg.large_image_url,
-        score: anime.score,
-        rank: anime.rank,
-        source: 'jikan'
-      }));
-
-      console.log(`✅ Found ${animes.length} popular anime`);
-      return animes;
+      console.log(`✅ Found ${animes.length} popular`);
+      return animes.slice(0, 20);
     } catch (error) {
-      console.error('✗ Error fetching popular anime:', error.message);
+      console.error(`✗ Popular failed: ${error.message}`);
       return [];
     }
   }
@@ -150,84 +378,37 @@ class AnimeScraper {
    */
   async getOngoingAnime() {
     try {
-      console.log('▶️ Fetching ongoing anime...');
+      console.log('▶️ Fetching ongoing...');
       
-      const response = await this.jikanApi.get('/anime', {
-        params: {
-          status: 'airing',
-          order_by: 'score',
-          sort: 'desc',
-          limit: 25
+      const html = await this.scrapeWithRetry(`${this.sources.otakudesu}/anime/ongoing-ajax/`);
+      const $ = cheerio.load(html);
+      const animes = [];
+
+      $('.item').each((index, element) => {
+        try {
+          const title = $(element).find('.thumb-title').text().trim();
+          const url = $(element).find('a').attr('href');
+          const poster = $(element).find('img').attr('src');
+          
+          if (title && url) {
+            const slug = url.split('/').filter(x => x).pop();
+            animes.push({
+              id: slug,
+              title,
+              url,
+              poster: poster || 'https://via.placeholder.com/150x225?text=No+Image',
+              source: 'otakudesu'
+            });
+          }
+        } catch (e) {
+          // Silent fail
         }
       });
 
-      const animes = response.data.data.map(anime => ({
-        id: anime.mal_id,
-        title: anime.title,
-        url: anime.url,
-        poster: anime.images.jpg.large_image_url,
-        latestEpisode: anime.aired?.from || 'Unknown',
-        source: 'jikan'
-      }));
-
-      console.log(`✅ Found ${animes.length} ongoing anime`);
-      return animes;
+      console.log(`✅ Found ${animes.length} ongoing`);
+      return animes.slice(0, 20);
     } catch (error) {
-      console.error('✗ Error fetching ongoing anime:', error.message);
-      return [];
-    }
-  }
-
-  /**
-   * Get streaming links (placeholder - Jikan tidak provide streaming)
-   */
-  async getStreamingLink(animeId) {
-    try {
-      console.log(`🎬 Fetching streaming info for anime: ${animeId}`);
-      
-      const response = await this.jikanApi.get(`/anime/${animeId}`);
-      const streaming = response.data.data.streaming || [];
-
-      const streamLinks = streaming.map(s => ({
-        provider: s.name,
-        url: s.url,
-        type: 'streaming'
-      }));
-
-      console.log(`✅ Found ${streamLinks.length} streaming links`);
-      return streamLinks;
-    } catch (error) {
-      console.error('✗ Error fetching streaming info:', error.message);
-      return [];
-    }
-  }
-
-  /**
-   * Get anime by season
-   */
-  async getAnimeBySeason(year, season) {
-    try {
-      console.log(`📅 Fetching anime for ${season} ${year}...`);
-      
-      const response = await this.jikanApi.get(`/seasons/${year}/${season}`, {
-        params: {
-          limit: 25
-        }
-      });
-
-      const animes = response.data.data.map(anime => ({
-        id: anime.mal_id,
-        title: anime.title,
-        url: anime.url,
-        poster: anime.images.jpg.large_image_url,
-        latestEpisode: anime.aired?.from || 'Unknown',
-        source: 'jikan'
-      }));
-
-      console.log(`✅ Found ${animes.length} anime for ${season} ${year}`);
-      return animes;
-    } catch (error) {
-      console.error('✗ Error fetching seasonal anime:', error.message);
+      console.error(`✗ Ongoing failed: ${error.message}`);
       return [];
     }
   }
