@@ -156,6 +156,8 @@ class AnimeScraper {
         params: { q: query }
       });
 
+      console.log('Search response:', JSON.stringify(response.data, null, 2));
+
       const data = response.data.data || [];
       const results = data.map(anime => ({
         id: anime.anime_id,
