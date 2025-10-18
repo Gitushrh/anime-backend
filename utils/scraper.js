@@ -4,27 +4,66 @@ const cheerio = require("cheerio");
 const BASE_URL = "https://www.sankavollerei.com/anime";
 
 const axiosInstance = axios.create({
-  timeout: 15000,
+  timeout: 20000, // Increased timeout
   headers: {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://www.sankavollerei.com",
+    "Origin": "https://www.sankavollerei.com",
+    "Connection": "keep-alive",
+    "Cache-Control": "no-cache",
   },
+  validateStatus: function (status) {
+    return status >= 200 && status < 500; // Accept any status code
+  }
 });
 
 async function fetchJSON(url) {
   try {
     console.log(`🌐 Fetching JSON from: ${url}`);
-    const { data } = await axiosInstance.get(url);
+    const { data, status } = await axiosInstance.get(url);
 
-    if (data.status === "success") {
-      return data;
-    } else {
-      throw new Error("API returned unsuccessful status");
+    console.log(`📊 Response status: ${status}`);
+    
+    // Log response structure for debugging
+    if (typeof data === 'object') {
+      console.log(`📦 Response keys: ${Object.keys(data).join(', ')}`);
     }
+
+    // Handle different response formats
+    if (data && typeof data === 'object') {
+      // Check if already has status field
+      if (data.status === "success") {
+        return data;
+      }
+      
+      // If data exists but no status field, wrap it
+      if (data.data || Array.isArray(data)) {
+        return {
+          status: "success",
+          data: data.data || data
+        };
+      }
+      
+      // If response has results directly
+      return {
+        status: "success",
+        data: data
+      };
+    }
+
+    throw new Error("Invalid response format from source API");
   } catch (err) {
     console.error(`❌ Fetch error for ${url}:`, err.message);
+    
+    // More detailed error logging
+    if (err.response) {
+      console.error(`Response status: ${err.response.status}`);
+      console.error(`Response data:`, JSON.stringify(err.response.data).substring(0, 200));
+    }
+    
     throw new Error(`Failed to fetch: ${err.message}`);
   }
 }
@@ -32,7 +71,14 @@ async function fetchJSON(url) {
 // ENHANCED: Extract video URLs with better parsing
 async function extractVideoUrls(episodeUrl) {
   try {
-    const { data: html } = await axiosInstance.get(episodeUrl);
+    console.log(`🔍 Extracting video URLs from: ${episodeUrl}`);
+    const { data: html, status } = await axiosInstance.get(episodeUrl);
+    
+    if (status !== 200) {
+      console.error(`❌ HTTP ${status} when fetching episode page`);
+      return [];
+    }
+    
     const $ = cheerio.load(html);
     
     const videoUrls = [];
@@ -167,7 +213,8 @@ module.exports = {
       res.status(500).json({
         status: "error",
         message: "Failed to fetch homepage anime",
-        details: err.message
+        details: err.message,
+        suggestion: "The source website might be down or changed its API structure"
       });
     }
   },
@@ -307,7 +354,7 @@ module.exports = {
           })).filter(v => v.url);
         }
       } catch (jsonErr) {
-        console.log("⚠️ JSON API failed, will rely on HTML scraping");
+        console.log("⚠️ JSON API failed, will rely on HTML scraping:", jsonErr.message);
       }
 
       // Always try HTML scraping as fallback or additional source
@@ -325,7 +372,8 @@ module.exports = {
         return res.status(404).json({
           status: "error",
           message: "No video URLs found for this episode",
-          slug: slug
+          slug: slug,
+          suggestion: "The episode might not have video sources yet, or the source website structure has changed"
         });
       }
 
@@ -404,14 +452,17 @@ module.exports = {
     }
 
     try {
+      console.log(`🔍 Searching for: ${query}`);
       const data = await fetchJSON(`${BASE_URL}/search/${encodeURIComponent(query)}`);
+      console.log(`✅ Search completed successfully`);
       res.json(data);
     } catch (err) {
       console.error("❌ Search error:", err.message);
       res.status(500).json({
         status: "error",
         message: "Search failed",
-        details: err.message
+        details: err.message,
+        suggestion: "The source website API might be unavailable or changed"
       });
     }
   },
@@ -420,6 +471,7 @@ module.exports = {
   ongoing: async (req, res) => {
     try {
       const page = req.query.page || 1;
+      console.log(`📺 Fetching ongoing anime (page ${page})...`);
       const data = await fetchJSON(`${BASE_URL}/ongoing-anime?page=${page}`);
       res.json(data);
     } catch (err) {
