@@ -1,4 +1,4 @@
-// utils/scraper.js - Ultimate Enhanced Video Extraction
+// utils/scraper.js - Enhanced with Better Source Detection
 const axios = require('axios');
 const cheerio = require('cheerio');
 
@@ -32,7 +32,6 @@ class AnimeScraper {
     return parts[parts.length - 1] || '';
   }
 
-  // Extract quality from URL or HTML
   extractQualityFromUrl(url, html = '') {
     const qualityPatterns = [
       { pattern: /\/(\d{3,4})p?[\/\.]/, label: (m) => `${m[1]}p` },
@@ -60,7 +59,6 @@ class AnimeScraper {
     return itagMap[itag] || 'auto';
   }
 
-  // ENHANCED: Extract multiple qualities from Blogger
   async extractBloggerVideo(url) {
     try {
       console.log('🎯 Extracting Blogger video...');
@@ -141,6 +139,63 @@ class AnimeScraper {
     }
   }
 
+  // NEW: Better URL validation
+  isVideoEmbedUrl(url) {
+    const videoProviders = [
+      'blogger.com/video',
+      'blogspot.com',
+      'googlevideo.com',
+      'desustream.info',
+      'streamtape.com',
+      'mp4upload.com',
+      'acefile.co',
+      'filelions.com',
+      'vidguard.to',
+      'streamwish.to',
+      'wishfast.top',
+      'streamhide.to',
+      'doodstream.com',
+      'mixdrop.co',
+      'sbembed.com',
+      'fembed.com',
+      'voe.sx',
+      'streamsb.net'
+    ];
+
+    // Skip non-video URLs
+    const skipPatterns = [
+      'otakudesu.cloud',
+      'desustream.com/safelink',
+      'otakufiles',
+      'racaty',
+      'gdrive',
+      'drive.google',
+      'zippyshare',
+      'mega.nz',
+      'mediafire',
+      'uptobox',
+      'solidfiles',
+      'tusfiles',
+      'anonfiles',
+      'pixeldrain',
+      'gofile',
+      'facebook.com',
+      'twitter.com',
+      'instagram.com',
+      'discord.gg'
+    ];
+
+    const urlLower = url.toLowerCase();
+    
+    // Check if it's a skip pattern
+    if (skipPatterns.some(pattern => urlLower.includes(pattern))) {
+      return false;
+    }
+
+    // Check if it's a video provider
+    return videoProviders.some(provider => urlLower.includes(provider));
+  }
+
   async extractDirectVideoUrl(iframeUrl, provider, depth = 0) {
     try {
       if (depth > 3) {
@@ -150,15 +205,9 @@ class AnimeScraper {
 
       console.log(`${'  '.repeat(depth)}🎬 Extracting [${provider}]`);
       
-      const skipPatterns = [
-        'desustream.com/safelink', 'otakufiles', 'racaty', 
-        'gdrive', 'drive.google', 'zippyshare', 'mega.nz', 
-        'mediafire', 'uptobox', 'solidfiles', 'tusfiles', 
-        'anonfiles', 'pixeldrain', 'gofile'
-      ];
-      
-      if (skipPatterns.some(pattern => iframeUrl.includes(pattern))) {
-        console.log(`${'  '.repeat(depth)}⏭️ Skipping shortener/download link`);
+      // Skip non-video URLs early
+      if (!this.isVideoEmbedUrl(iframeUrl)) {
+        console.log(`${'  '.repeat(depth)}⏭️ Skipping non-video URL`);
         return null;
       }
 
@@ -194,11 +243,11 @@ class AnimeScraper {
         return [providerData];
       }
 
-      // PRIORITY 3: Nested iframes
+      // PRIORITY 3: Nested iframes (only if they're video embeds)
       const nestedIframes = [];
       $('iframe[src]').each((i, el) => {
         const src = $(el).attr('src');
-        if (src && src.startsWith('http') && src !== iframeUrl) {
+        if (src && src.startsWith('http') && src !== iframeUrl && this.isVideoEmbedUrl(src)) {
           nestedIframes.push(src);
         }
       });
@@ -423,76 +472,50 @@ class AnimeScraper {
       const $ = await this.fetchHTML(`${this.baseUrl}/episode/${episodeId}`);
       const allLinks = [];
 
-      // ENHANCED: Multiple selector strategies
+      // STRATEGY 1: Standard streaming selectors
+      const standardSelectors = [
+        '.mirrorstream ul li a',
+        '.mirrorstream a',
+        '.download-eps a[href*="blogger"]',
+        '.download-eps a[href*="desustream"]',
+        '.venutama .responsive-embed-stream iframe',
+      ];
+
       const iframeSources = [];
       
-      // Strategy 1: Standard mirrorstream
-      $('.mirrorstream ul li a, .mirrorstream a').each((i, el) => {
-        const $el = $(el);
-        const provider = $el.text().trim();
-        const url = $el.attr('href');
+      for (const selector of standardSelectors) {
+        $(selector).each((i, el) => {
+          const $el = $(el);
+          const provider = $el.text().trim() || $el.attr('title') || `Server ${i + 1}`;
+          const url = $el.attr('href') || $el.attr('src');
 
-        if (url && url !== '#' && !url.startsWith('javascript:') && url.startsWith('http')) {
-          iframeSources.push({ provider, url });
-        }
-      });
+          if (url && url.startsWith('http') && this.isVideoEmbedUrl(url)) {
+            iframeSources.push({ provider, url });
+          }
+        });
+      }
 
-      // Strategy 2: data-content attributes
+      // STRATEGY 2: data-content attributes
       $('[data-content]').each((i, el) => {
         const $el = $(el);
         const content = $el.attr('data-content');
         const provider = $el.text().trim() || `Server ${i + 1}`;
         
-        if (content && content.startsWith('http')) {
+        if (content && content.startsWith('http') && this.isVideoEmbedUrl(content)) {
           iframeSources.push({ provider, url: content });
         }
       });
 
-      // Strategy 3: Direct iframes
+      // STRATEGY 3: Direct iframes (only video embeds)
       $('iframe[src*="http"]').each((i, el) => {
         const src = $(el).attr('src');
-        if (src && !src.includes('desustream.com/safelink')) {
+        if (src && this.isVideoEmbedUrl(src)) {
           iframeSources.push({ 
             provider: `Iframe ${i + 1}`, 
             url: src 
           });
         }
       });
-
-      // Strategy 4: Download section links (convert to stream)
-      $('.download ul li a').each((i, el) => {
-        const $el = $(el);
-        const provider = $el.text().trim();
-        const url = $el.attr('href');
-        
-        if (url && url.startsWith('http') && !url.includes('desustream.com/safelink')) {
-          iframeSources.push({ provider: `${provider} (DL)`, url });
-        }
-      });
-
-      // Strategy 5: venutama section
-      $('.venutama a[href], .responsive-embed-stream a[href]').each((i, el) => {
-        const $el = $(el);
-        const url = $el.attr('href');
-        const provider = $el.text().trim() || `Link ${i + 1}`;
-        
-        if (url && url.startsWith('http') && !url.includes('desustream.com/safelink')) {
-          iframeSources.push({ provider, url });
-        }
-      });
-
-      // Strategy 6: ALL links in page (last resort)
-      if (iframeSources.length === 0) {
-        console.log('⚠️ No standard sources found, trying ALL links...');
-        $('a[href*="http"]').each((i, el) => {
-          const url = $(el).attr('href');
-          const text = $(el).text().trim();
-          
-          if (url && !url.includes('otakudesu') && !url.includes('desustream.com/safelink')) {
-            iframeSources.push({ provider: text || `Link ${i + 1}`, url });
-          }
-        });
-      }
 
       // Remove duplicates
       const uniqueSources = [];
@@ -504,13 +527,15 @@ class AnimeScraper {
         }
       }
 
-      console.log(`📡 Found ${uniqueSources.length} iframe sources`);
+      console.log(`📡 Found ${uniqueSources.length} video sources`);
       if (uniqueSources.length > 0) {
         console.log(`🔍 Sources: ${uniqueSources.slice(0, 5).map(s => s.provider).join(', ')}`);
+      } else {
+        console.log('⚠️ No video sources found! The episode page structure might have changed.');
       }
 
-      // Extract from ALL sources
-      const extractionPromises = uniqueSources.map(async (source) => {
+      // Extract from sources (limit to 5 to avoid timeout)
+      const extractionPromises = uniqueSources.slice(0, 5).map(async (source) => {
         try {
           const videoData = await this.extractDirectVideoUrl(source.url, source.provider);
           if (videoData) {
