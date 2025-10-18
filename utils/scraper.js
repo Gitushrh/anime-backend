@@ -204,6 +204,36 @@ class AnimeScraper {
   async extractByProvider(url, html, $, provider) {
     const providerLower = provider.toLowerCase();
 
+    // Blogger.com video embed
+    if (url.includes('blogger.com/video') || url.includes('blogspot.com')) {
+      console.log('🎯 Blogger video detected');
+      
+      // Extract token from URL
+      const tokenMatch = url.match(/token=([^&]+)/);
+      if (tokenMatch) {
+        // Try to find video URL in response
+        const videoPatterns = [
+          /"url":"([^"]+\.mp4[^"]*)"/g,
+          /"video_url":"([^"]+)"/g,
+          /progressive_url[^:]*:\s*"([^"]+)"/g,
+        ];
+        
+        for (const pattern of videoPatterns) {
+          const matches = [...html.matchAll(pattern)];
+          for (const match of matches) {
+            let videoUrl = match[1];
+            videoUrl = videoUrl.replace(/\\/g, '');
+            if (videoUrl.includes('.mp4') || videoUrl.includes('.m3u8')) {
+              return {
+                url: videoUrl,
+                type: videoUrl.includes('.m3u8') ? 'hls' : 'mp4'
+              };
+            }
+          }
+        }
+      }
+    }
+
     // DesuStream - Custom extraction for otakudesu's player
     if (url.includes('desustream.info') || providerLower.includes('desustream')) {
       console.log('🎯 Desustream detected, using custom extractor');
@@ -402,29 +432,34 @@ class AnimeScraper {
       const extractedLinks = (await Promise.all(extractionPromises)).filter(link => link !== null);
       allLinks.push(...extractedLinks);
 
-      // Get download links as fallback
-      $('.download ul').each((i, ulEl) => {
-        const $ul = $(ulEl);
-        const quality = $ul.prev('strong').text().trim() || 
-                       $ul.parent().find('strong').first().text().trim() ||
-                       'Unknown Quality';
+      // Get download links and try to extract direct MP4 URLs
+      const downloadSections = [];
+      $('.download h4').each((i, el) => {
+        const quality = $(el).text().trim();
+        downloadSections.push({ quality, element: el });
+      });
+
+      for (const section of downloadSections) {
+        const $section = $(section.element).next('ul');
         
-        $ul.find('li a').each((j, linkEl) => {
+        $section.find('li a').each((j, linkEl) => {
           const $link = $(linkEl);
           const provider = $link.text().trim();
           const url = $link.attr('href');
           
-          if (url && url !== '#' && !url.startsWith('javascript:')) {
+          // Skip shortener links in download section
+          if (url && url !== '#' && !url.startsWith('javascript:') && 
+              !url.includes('desustream.com/safelink')) {
             allLinks.push({
-              provider: `${provider} - ${quality}`,
+              provider: `${provider}`,
               url,
               type: 'download',
-              quality,
+              quality: section.quality,
               priority: 3
             });
           }
         });
-      });
+      }
 
       // Add iframe sources as fallback (only if not shorteners)
       uniqueSources.slice(0, 3).forEach(source => {
@@ -444,10 +479,14 @@ class AnimeScraper {
 
       console.log(`✅ Total links: ${allLinks.length}`);
       console.log(`   - Direct (MP4/HLS): ${extractedLinks.length}`);
-      console.log(`   - Download: ${allLinks.filter(l => l.type === 'download').length}`);
       console.log(`   - Iframe fallback: ${allLinks.filter(l => l.type === 'iframe').length}`);
       
-      return allLinks;
+      // Don't return download links to client
+      const filteredLinks = allLinks.filter(l => l.type !== 'download');
+      
+      console.log(`📤 Returning ${filteredLinks.length} playable links (download links excluded)`);
+      
+      return filteredLinks;
     } catch (error) {
       console.error('✗ Error scraping streaming links:', error.message);
       return [];
