@@ -1,7 +1,7 @@
 {
   "name": "anime_app_backend",
   "version": "2.0.0",
-  "description": "Backend for Anime Streaming App - Web Scraping Otakudesu",
+  "description": "Backend for Anime Streaming App - Web Scraping Otakudesu with Puppeteer Integration",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -13,7 +13,8 @@
     "api",
     "streaming",
     "otakudesu",
-    "cheerio"
+    "cheerio",
+    "puppeteer"
   ],
   "author": "",
   "license": "ISC",
@@ -22,7 +23,7 @@
     "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "puppeteer": "^24.25.0"
+    "puppeteer": "^23.5.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
@@ -30,5 +31,15 @@
   "engines": {
     "node": "20.x",
     "npm": "10.x"
+  },
+  "puppeteer": {
+    "args": [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--no-zygote"
+    ],
+    "executablePath": "/usr/bin/chromium-browser"
   }
 }
