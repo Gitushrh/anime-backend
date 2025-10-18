@@ -1,30 +1,34 @@
 {
-  "package.json": {
-    "name": "anime_app_backend",
-    "version": "1.0.0",
-    "description": "Backend for Anime Streaming App with Scraping",
-    "main": "server.js",
-    "scripts": {
-      "start": "node server.js",
-      "dev": "nodemon server.js"
-    },
-    "dependencies": {
-      "axios": "^1.6.0",
-      "body-parser": "^1.20.2",
-      "cheerio": "^1.0.0-rc.12",
-      "compression": "^1.7.4",
-      "cors": "^2.8.5",
-      "dotenv": "^16.6.1",
-      "express": "^4.18.2",
-      "express-rate-limit": "^7.1.0"
-    },
-    "devDependencies": {
-      "nodemon": "^3.0.2"
-    },
-    "engines": {
-      "node": ">=18.18 <19 || >=20"
-    }
+  "name": "anime_app_backend",
+  "version": "1.0.0",
+  "description": "Backend for Anime Streaming App with Scraping",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
-  
-  "server.js": "const express = require('express');\nconst cors = require('cors');\nconst compression = require('compression');\nconst AnimeScraper = require('./utils/scraper');\n\nconst app = express();\nconst scraper = new AnimeScraper();\n\n// Middleware\napp.use(compression());\napp.use(cors());\napp.use(express.json());\napp.use(express.urlencoded({ extended: true }));\n\n// Request logging\napp.use((req, res, next) => {\n  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);\n  next();\n});\n\n// Health check endpoint\napp.get('/', (req, res) => {\n  res.json({ \n    status: 'OK', \n    message: 'Anime Scraper API is running',\n    version: '1.0.0',\n    endpoints: {\n      latest: '/api/latest',\n      popular: '/api/popular',\n      search: '/api/search?q=naruto',\n      anime: '/api/anime/:slug',\n      streaming: '/api/streaming?url=...'\n    }\n  });\n});\n\n// Get latest anime\napp.get('/api/latest', async (req, res) => {\n  try {\n    console.log('Fetching latest anime...');\n    const animes = await scraper.getLatestAnime();\n    \n    if (animes.length === 0) {\n      return res.status(200).json({ \n        success: false, \n        error: 'No anime found',\n        data: []\n      });\n    }\n    \n    res.json({ \n      success: true, \n      count: animes.length,\n      data: animes \n    });\n  } catch (error) {\n    console.error('API Error /latest:', error.message);\n    res.status(500).json({ \n      success: false, \n      error: 'Failed to fetch latest anime',\n      message: error.message \n    });\n  }\n});\n\n// Get popular anime\napp.get('/api/popular', async (req, res) => {\n  try {\n    console.log('Fetching popular anime...');\n    const animes = await scraper.getPopularAnime();\n    \n    res.json({ \n      success: true, \n      count: animes.length,\n      data: animes \n    });\n  } catch (error) {\n    console.error('API Error /popular:', error.message);\n    res.status(500).json({ \n      success: false, \n      error: 'Failed to fetch popular anime',\n      message: error.message \n    });\n  }\n});\n\n// Get anime detail\napp.get('/api/anime/:slug', async (req, res) => {\n  try {\n    const { slug } = req.params;\n    console.log(`Fetching anime detail: ${slug}`);\n    \n    const detail = await scraper.getAnimeDetail(slug);\n    \n    if (!detail || !detail.title) {\n      return res.status(404).json({ \n        success: false, \n        error: 'Anime not found',\n        data: null \n      });\n    }\n    \n    res.json({ \n      success: true, \n      data: detail \n    });\n  } catch (error) {\n    console.error('API Error /anime/:slug:', error.message);\n    res.status(500).json({ \n      success: false, \n      error: 'Failed to fetch anime detail',\n      message: error.message \n    });\n  }\n});\n\n// Get streaming links\napp.get('/api/streaming', async (req, res) => {\n  try {\n    const { url } = req.query;\n    \n    if (!url) {\n      return res.status(400).json({ \n        success: false, \n        error: 'URL parameter is required',\n        data: []\n      });\n    }\n    \n    console.log(`Fetching streaming links for: ${url.substring(0, 50)}...`);\n    const links = await scraper.getStreamingLink(url);\n    \n    res.json({ \n      success: true, \n      count: links.length,\n      data: links \n    });\n  } catch (error) {\n    console.error('API Error /streaming:', error.message);\n    res.status(500).json({ \n      success: false, \n      error: 'Failed to fetch streaming links',\n      message: error.message,\n      data: []\n    });\n  }\n});\n\n// Search anime\napp.get('/api/search', async (req, res) => {\n  try {\n    const { q } = req.query;\n    \n    if (!q || q.trim().length === 0) {\n      return res.status(400).json({ \n        success: false, \n        error: 'Search query is required',\n        data: []\n      });\n    }\n    \n    console.log(`Searching anime: ${q}`);\n    const results = await scraper.searchAnime(q);\n    \n    res.json({ \n      success: true, \n      count: results.length,\n      data: results \n    });\n  } catch (error) {\n    console.error('API Error /search:', error.message);\n    res.status(500).json({ \n      success: false, \n      error: 'Failed to search anime',\n      message: error.message,\n      data: []\n    });\n  }\n});\n\n// 404 handler\napp.use((req, res) => {\n  res.status(404).json({ \n    success: false, \n    error: 'Endpoint not found',\n    availableEndpoints: [\n      'GET /',\n      'GET /api/latest',\n      'GET /api/popular',\n      'GET /api/search?q=query',\n      'GET /api/anime/:slug',\n      'GET /api/streaming?url=episodeUrl'\n    ]\n  });\n});\n\n// Error handling middleware\napp.use((err, req, res, next) => {\n  console.error('Unhandled error:', err);\n  res.status(500).json({ \n    success: false, \n    error: 'Internal server error',\n    message: err.message\n  });\n});\n\nconst PORT = process.env.PORT || 5000;\napp.listen(PORT, () => {\n  console.log(`✅ Anime Scraper API running on port ${PORT}`);\n  console.log(`📡 Base URL: http://localhost:${PORT}`);\n  console.log(`🔗 Visit http://localhost:${PORT}/ for available endpoints`);\n});"
+  "keywords": [
+    "anime",
+    "scraper",
+    "api",
+    "streaming"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "body-parser": "^1.20.2",
+    "cheerio": "^1.0.0-rc.12",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.18 <19 || >=20"
+  }
 }
