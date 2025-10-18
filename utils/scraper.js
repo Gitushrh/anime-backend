@@ -1,4 +1,4 @@
-// utils/scraper.js - Web Scraping Otakudesu
+// utils/scraper.js - Enhanced Web Scraping with Direct Video Links
 const axios = require('axios');
 const cheerio = require('cheerio');
 
@@ -30,6 +30,50 @@ class AnimeScraper {
     if (!url) return '';
     const parts = url.split('/').filter(p => p);
     return parts[parts.length - 1] || '';
+  }
+
+  // Extract direct video URL from iframe sources
+  async extractVideoUrl(iframeUrl) {
+    try {
+      console.log(`🎬 Extracting video from: ${iframeUrl}`);
+      
+      const response = await this.api.get(iframeUrl);
+      const html = response.data;
+      
+      // Try to find MP4 or M3U8 links in the response
+      const mp4Regex = /(https?:\/\/[^"'\s]+\.mp4[^"'\s]*)/gi;
+      const m3u8Regex = /(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/gi;
+      
+      const mp4Matches = html.match(mp4Regex);
+      const m3u8Matches = html.match(m3u8Regex);
+      
+      if (mp4Matches && mp4Matches.length > 0) {
+        return { url: mp4Matches[0], type: 'mp4' };
+      }
+      
+      if (m3u8Matches && m3u8Matches.length > 0) {
+        return { url: m3u8Matches[0], type: 'hls' };
+      }
+      
+      // Try to find video source in various formats
+      const videoSrcRegex = /(?:file|src|source)["']?\s*[:=]\s*["']([^"']+)["']/gi;
+      const matches = [...html.matchAll(videoSrcRegex)];
+      
+      for (const match of matches) {
+        const url = match[1];
+        if (url.includes('.mp4') || url.includes('.m3u8')) {
+          return {
+            url: url,
+            type: url.includes('.m3u8') ? 'hls' : 'mp4'
+          };
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error extracting video URL:', error.message);
+      return null;
+    }
   }
 
   async getLatestAnime() {
@@ -241,7 +285,9 @@ class AnimeScraper {
       
       const $ = await this.fetchHTML(`${this.baseUrl}/episode/${episodeId}`);
       const streamLinks = [];
+      const downloadLinks = [];
 
+      // Get streaming iframe sources
       $('.mirrorstream ul li').each((i, el) => {
         const $el = $(el);
         const provider = $el.find('a').text().trim();
@@ -251,13 +297,55 @@ class AnimeScraper {
           streamLinks.push({
             provider: provider || 'Unknown',
             url,
-            type: 'streaming'
+            type: 'iframe'
           });
         }
       });
 
-      console.log(`✅ Found ${streamLinks.length} streaming links`);
-      return streamLinks;
+      // Get download links (usually MP4)
+      $('.download ul li').each((i, el) => {
+        const $el = $(el);
+        const quality = $el.find('strong').text().trim();
+        
+        $el.find('a').each((j, linkEl) => {
+          const $link = $(linkEl);
+          const provider = $link.text().trim();
+          const url = $link.attr('href');
+          
+          if (url && (url.includes('.mp4') || provider.toLowerCase().includes('mp4'))) {
+            downloadLinks.push({
+              provider: `${provider} (${quality})`,
+              url,
+              type: 'mp4',
+              quality
+            });
+          }
+        });
+      });
+
+      // Try to extract direct video links from iframes
+      const directLinks = [];
+      for (const link of streamLinks.slice(0, 3)) { // Process first 3 links only
+        try {
+          const videoData = await this.extractVideoUrl(link.url);
+          if (videoData) {
+            directLinks.push({
+              provider: link.provider,
+              url: videoData.url,
+              type: videoData.type,
+              quality: 'auto'
+            });
+          }
+        } catch (err) {
+          console.log(`Failed to extract video from ${link.provider}`);
+        }
+      }
+
+      // Prioritize: direct links > download links > iframe links
+      const allLinks = [...directLinks, ...downloadLinks, ...streamLinks];
+
+      console.log(`✅ Found ${allLinks.length} streaming links (${directLinks.length} direct, ${downloadLinks.length} download)`);
+      return allLinks;
     } catch (error) {
       console.error('✗ Error scraping streaming links:', error.message);
       return [];
