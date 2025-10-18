@@ -1,7 +1,7 @@
-# Use official Node.js 20 Alpine image (smaller)
+# Use official Node.js 20 Alpine image
 FROM node:20-alpine
 
-# Install Chromium dependencies
+# Install Chromium and dependencies
 RUN apk add --no-cache \
     chromium \
     nss \
@@ -10,7 +10,7 @@ RUN apk add --no-cache \
     ca-certificates \
     ttf-freefont
 
-# Set environment variables for Puppeteer
+# Set environment variables
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
     NODE_ENV=production
@@ -21,10 +21,10 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies (production only)
-RUN npm ci --omit=dev --prefer-offline --no-audit
+# Install dependencies (changed from npm ci to npm install)
+RUN npm install --production --no-optional
 
-# Copy app source
+# Copy application files
 COPY . .
 
 # Expose port
@@ -34,5 +34,5 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD node -e "require('http').get('http://localhost:5000', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Start app
+# Start application
 CMD ["node", "server.js"]
