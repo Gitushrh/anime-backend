@@ -1,38 +1,39 @@
-// utils/scraper.js - Menggunakan Otakudesu Official API v2
+// utils/scraper.js - Menggunakan Otakudesu Cloud API
 const axios = require('axios');
 
 class AnimeScraper {
   constructor() {
     this.api = axios.create({
-      baseURL: 'https://otakudesu.cloud/api/v2',
-      timeout: 15000,
+      baseURL: 'https://otakudesu.cloud',
+      timeout: 30000,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json'
       }
     });
   }
 
   async getLatestAnime() {
     try {
-      console.log('📡 Fetching latest anime from Otakudesu API...');
+      console.log('📡 Fetching latest anime from Otakudesu...');
       
       const response = await this.api.get('/otakudesu/home');
-      const data = response.data.data;
-
-      if (!data || !data.ongoing) {
+      
+      if (!response.data || !response.data.ongoing_anime) {
+        console.log('⚠️ No ongoing anime found in response');
         return [];
       }
 
-      const animes = data.ongoing.map(anime => ({
-        id: anime.anime_id,
-        title: anime.anime_title,
-        url: anime.anime_url,
-        poster: anime.anime_image,
-        latestEpisode: anime.latest_episode || 'Unknown',
+      const animes = response.data.ongoing_anime.map(anime => ({
+        id: anime.slug || anime.anime_id,
+        title: anime.title,
+        url: anime.link,
+        poster: anime.poster,
+        latestEpisode: anime.current_episode || 'Unknown',
         source: 'otakudesu'
       }));
 
-      console.log(`✅ Found ${animes.length} anime`);
+      console.log(`✅ Found ${animes.length} latest anime`);
       return animes;
     } catch (error) {
       console.error('✗ Error fetching latest anime:', error.message);
@@ -45,18 +46,17 @@ class AnimeScraper {
       console.log('⭐ Fetching popular anime...');
       
       const response = await this.api.get('/otakudesu/home');
-      const data = response.data.data;
-
-      if (!data || !data.top_anime) {
+      
+      if (!response.data || !response.data.popular_week) {
+        console.log('⚠️ No popular anime found');
         return [];
       }
 
-      const animes = data.top_anime.map(anime => ({
-        id: anime.anime_id,
-        title: anime.anime_title,
-        url: anime.anime_url,
-        poster: anime.anime_image,
-        score: anime.anime_score,
+      const animes = response.data.popular_week.map(anime => ({
+        id: anime.slug || anime.anime_id,
+        title: anime.title,
+        url: anime.link,
+        poster: anime.poster,
         source: 'otakudesu'
       }));
 
@@ -76,13 +76,17 @@ class AnimeScraper {
         params: { page }
       });
 
-      const data = response.data.data || [];
-      const animes = data.map(anime => ({
-        id: anime.anime_id,
-        title: anime.anime_title,
-        url: anime.anime_url,
-        poster: anime.anime_image,
-        latestEpisode: anime.latest_episode || 'Unknown',
+      if (!response.data || !response.data.ongoing) {
+        return [];
+      }
+
+      const animes = response.data.ongoing.map(anime => ({
+        id: anime.slug || anime.anime_id,
+        title: anime.title,
+        url: anime.link,
+        poster: anime.poster,
+        latestEpisode: anime.current_episode || 'Unknown',
+        day: anime.day,
         source: 'otakudesu'
       }));
 
@@ -99,23 +103,35 @@ class AnimeScraper {
       console.log(`📖 Fetching anime detail: ${animeId}`);
       
       const response = await this.api.get(`/otakudesu/anime/${animeId}`);
-      const data = response.data.data;
+      const data = response.data;
+
+      if (!data) {
+        return null;
+      }
 
       const detail = {
-        id: data.anime_id,
-        title: data.anime_title,
-        poster: data.anime_image,
-        synopsis: data.anime_synopsis || 'No synopsis available',
-        episodes: data.episodes || [],
+        id: animeId,
+        title: data.title,
+        poster: data.poster,
+        synopsis: data.synopsis || 'No synopsis available',
+        episodes: (data.episode_list || []).map(ep => ({
+          number: ep.episode,
+          date: ep.date,
+          url: ep.slug
+        })),
+        batch: data.batch || null,
         info: {
-          'Type': data.anime_type || 'Unknown',
-          'Episodes': data.total_episode || 'Unknown',
-          'Status': data.anime_status || 'Unknown',
-          'Aired': data.anime_aired || 'Unknown',
-          'Studio': data.anime_studio || 'Unknown',
-          'Score': data.anime_score || 'N/A'
+          'Japanese': data.detail?.japanese || 'Unknown',
+          'Type': data.detail?.type || 'Unknown',
+          'Episodes': data.detail?.total_episode || 'Unknown',
+          'Status': data.detail?.status || 'Unknown',
+          'Aired': data.detail?.release_date || 'Unknown',
+          'Premiered': data.detail?.season || 'Unknown',
+          'Studio': data.detail?.studio || 'Unknown',
+          'Duration': data.detail?.duration || 'Unknown',
+          'Score': data.detail?.score || 'N/A'
         },
-        genres: data.anime_genre || [],
+        genres: data.genres || [],
         source: 'otakudesu'
       };
 
@@ -132,11 +148,15 @@ class AnimeScraper {
       console.log(`🎬 Fetching episode: ${episodeId}`);
       
       const response = await this.api.get(`/otakudesu/episode/${episodeId}`);
-      const data = response.data.data;
+      const data = response.data;
 
-      const streamLinks = (data.servers || []).map(server => ({
-        provider: server.server_name || 'Unknown',
-        url: server.url,
+      if (!data || !data.stream_link) {
+        return [];
+      }
+
+      const streamLinks = data.stream_link.map(server => ({
+        provider: server.title || 'Unknown',
+        url: server.link,
         type: 'streaming'
       }));
 
@@ -158,12 +178,18 @@ class AnimeScraper {
 
       console.log('Search response:', JSON.stringify(response.data, null, 2));
 
-      const data = response.data.data || [];
-      const results = data.map(anime => ({
-        id: anime.anime_id,
-        title: anime.anime_title,
-        url: anime.anime_url,
-        poster: anime.anime_image,
+      if (!response.data || !response.data.data) {
+        return [];
+      }
+
+      const results = response.data.data.map(anime => ({
+        id: anime.slug || anime.anime_id,
+        title: anime.title,
+        url: anime.link,
+        poster: anime.poster,
+        genres: anime.genres || [],
+        status: anime.status,
+        rating: anime.rating,
         source: 'otakudesu'
       }));
 
@@ -180,11 +206,14 @@ class AnimeScraper {
       console.log('🏷️ Fetching genres...');
       
       const response = await this.api.get('/otakudesu/genres');
-      const data = response.data.data || [];
+      
+      if (!response.data || !response.data.genres) {
+        return [];
+      }
 
-      const genres = data.map(genre => ({
-        id: genre.genre_id,
-        name: genre.genre_name
+      const genres = response.data.genres.map(genre => ({
+        id: genre.slug,
+        name: genre.title
       }));
 
       console.log(`✅ Found ${genres.length} genres`);
@@ -200,13 +229,57 @@ class AnimeScraper {
       console.log('📅 Fetching schedule...');
       
       const response = await this.api.get('/otakudesu/schedule');
-      const data = response.data.data || {};
+      const data = response.data || {};
 
       console.log('✅ Schedule fetched');
       return data;
     } catch (error) {
       console.error('✗ Error fetching schedule:', error.message);
       return {};
+    }
+  }
+
+  async getCompletedAnime(page = 1) {
+    try {
+      console.log(`✓ Fetching completed anime (page ${page})...`);
+      
+      const response = await this.api.get('/otakudesu/completed', {
+        params: { page }
+      });
+
+      if (!response.data || !response.data.data) {
+        return [];
+      }
+
+      const animes = response.data.data.map(anime => ({
+        id: anime.slug,
+        title: anime.title,
+        url: anime.link,
+        poster: anime.poster,
+        score: anime.score,
+        source: 'otakudesu'
+      }));
+
+      console.log(`✅ Found ${animes.length} completed anime`);
+      return animes;
+    } catch (error) {
+      console.error('✗ Error fetching completed anime:', error.message);
+      return [];
+    }
+  }
+
+  async getBatchDownload(batchId) {
+    try {
+      console.log(`📦 Fetching batch: ${batchId}`);
+      
+      const response = await this.api.get(`/otakudesu/batch/${batchId}`);
+      const data = response.data;
+
+      console.log('✅ Batch data fetched');
+      return data;
+    } catch (error) {
+      console.error('✗ Error fetching batch:', error.message);
+      return null;
     }
   }
 }

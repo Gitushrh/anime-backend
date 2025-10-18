@@ -1,4 +1,4 @@
-// server.js
+// server.js - Updated Backend API
 const express = require('express');
 const cors = require('cors');
 const AnimeScraper = require('./utils/scraper');
@@ -21,30 +21,27 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: 'Anime Scraper API is running',
-    version: '1.0.0',
+    version: '2.0.0',
+    source: 'otakudesu.cloud',
     endpoints: {
       latest: '/api/latest',
       popular: '/api/popular',
-      search: '/api/search?q=naruto',
+      ongoing: '/api/ongoing?page=1',
+      completed: '/api/completed?page=1',
+      search: '/api/search?q=jujutsu',
       anime: '/api/anime/:slug',
-      streaming: '/api/streaming?url=...'
+      episode: '/api/episode/:episodeId',
+      batch: '/api/batch/:batchId',
+      genres: '/api/genres',
+      schedule: '/api/schedule'
     }
   });
 });
 
-// Get latest anime
+// Get latest anime (ongoing)
 app.get('/api/latest', async (req, res) => {
   try {
-    console.log('Fetching latest anime...');
     const animes = await scraper.getLatestAnime();
-    
-    if (animes.length === 0) {
-      return res.status(200).json({ 
-        success: false, 
-        error: 'No anime found',
-        data: []
-      });
-    }
     
     res.json({ 
       success: true, 
@@ -56,7 +53,8 @@ app.get('/api/latest', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch latest anime',
-      message: error.message 
+      message: error.message,
+      data: []
     });
   }
 });
@@ -64,7 +62,6 @@ app.get('/api/latest', async (req, res) => {
 // Get popular anime
 app.get('/api/popular', async (req, res) => {
   try {
-    console.log('Fetching popular anime...');
     const animes = await scraper.getPopularAnime();
     
     res.json({ 
@@ -77,7 +74,8 @@ app.get('/api/popular', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch popular anime',
-      message: error.message 
+      message: error.message,
+      data: []
     });
   }
 });
@@ -85,11 +83,12 @@ app.get('/api/popular', async (req, res) => {
 // Get ongoing anime
 app.get('/api/ongoing', async (req, res) => {
   try {
-    console.log('Fetching ongoing anime...');
-    const animes = await scraper.getOngoingAnime();
+    const page = parseInt(req.query.page) || 1;
+    const animes = await scraper.getOngoingAnime(page);
     
     res.json({ 
       success: true, 
+      page,
       count: animes.length,
       data: animes 
     });
@@ -98,7 +97,31 @@ app.get('/api/ongoing', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch ongoing anime',
-      message: error.message 
+      message: error.message,
+      data: []
+    });
+  }
+});
+
+// Get completed anime
+app.get('/api/completed', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const animes = await scraper.getCompletedAnime(page);
+    
+    res.json({ 
+      success: true, 
+      page,
+      count: animes.length,
+      data: animes 
+    });
+  } catch (error) {
+    console.error('API Error /completed:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch completed anime',
+      message: error.message,
+      data: []
     });
   }
 });
@@ -107,11 +130,9 @@ app.get('/api/ongoing', async (req, res) => {
 app.get('/api/anime/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    console.log(`Fetching anime detail: ${id}`);
-    
     const detail = await scraper.getAnimeDetail(id);
     
-    if (!detail || !detail.title) {
+    if (!detail) {
       return res.status(404).json({ 
         success: false, 
         error: 'Anime not found',
@@ -128,49 +149,48 @@ app.get('/api/anime/:id', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch anime detail',
-      message: error.message 
+      message: error.message,
+      data: null
     });
   }
 });
 
-// Get anime by season
-app.get('/api/season/:year/:season', async (req, res) => {
+// Get episode streaming links
+app.get('/api/episode/:episodeId', async (req, res) => {
   try {
-    const { year, season } = req.params;
-    console.log(`Fetching anime for ${season} ${year}`);
-    
-    const animes = await scraper.getAnimeBySeason(year, season);
+    const { episodeId } = req.params;
+    const links = await scraper.getStreamingLink(episodeId);
     
     res.json({ 
       success: true, 
-      count: animes.length,
-      data: animes 
+      count: links.length,
+      data: links 
     });
   } catch (error) {
-    console.error('API Error /season/:year/:season:', error.message);
+    console.error('API Error /episode/:episodeId:', error.message);
     res.status(500).json({ 
       success: false, 
-      error: 'Failed to fetch seasonal anime',
-      message: error.message 
+      error: 'Failed to fetch episode links',
+      message: error.message,
+      data: []
     });
   }
 });
 
-// Get streaming links
+// LEGACY: Get streaming links (untuk backward compatibility)
 app.get('/api/streaming', async (req, res) => {
   try {
-    const { url } = req.query;
+    const { episodeId } = req.query;
     
-    if (!url) {
+    if (!episodeId) {
       return res.status(400).json({ 
         success: false, 
-        error: 'URL parameter is required',
+        error: 'episodeId parameter is required',
         data: []
       });
     }
     
-    console.log(`Fetching streaming links for: ${url.substring(0, 50)}...`);
-    const links = await scraper.getStreamingLink(url);
+    const links = await scraper.getStreamingLink(episodeId);
     
     res.json({ 
       success: true, 
@@ -188,6 +208,35 @@ app.get('/api/streaming', async (req, res) => {
   }
 });
 
+// Get batch download links
+app.get('/api/batch/:batchId', async (req, res) => {
+  try {
+    const { batchId } = req.params;
+    const batch = await scraper.getBatchDownload(batchId);
+    
+    if (!batch) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Batch not found',
+        data: null 
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      data: batch 
+    });
+  } catch (error) {
+    console.error('API Error /batch/:batchId:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch batch',
+      message: error.message,
+      data: null
+    });
+  }
+});
+
 // Search anime
 app.get('/api/search', async (req, res) => {
   try {
@@ -196,16 +245,16 @@ app.get('/api/search', async (req, res) => {
     if (!q || q.trim().length === 0) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Search query is required',
+        error: 'Search query (q) is required',
         data: []
       });
     }
     
-    console.log(`Searching anime: ${q}`);
     const results = await scraper.searchAnime(q);
     
     res.json({ 
       success: true, 
+      query: q,
       count: results.length,
       data: results 
     });
@@ -224,9 +273,19 @@ app.get('/api/search', async (req, res) => {
 app.get('/api/genres', async (req, res) => {
   try {
     const genres = await scraper.getGenres();
-    res.json({ success: true, count: genres.length, data: genres });
+    res.json({ 
+      success: true, 
+      count: genres.length, 
+      data: genres 
+    });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('API Error /genres:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch genres',
+      message: error.message,
+      data: []
+    });
   }
 });
 
@@ -234,9 +293,18 @@ app.get('/api/genres', async (req, res) => {
 app.get('/api/schedule', async (req, res) => {
   try {
     const schedule = await scraper.getSchedule();
-    res.json({ success: true, data: schedule });
+    res.json({ 
+      success: true, 
+      data: schedule 
+    });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('API Error /schedule:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch schedule',
+      message: error.message,
+      data: {}
+    });
   }
 });
 
@@ -249,9 +317,14 @@ app.use((req, res) => {
       'GET /',
       'GET /api/latest',
       'GET /api/popular',
+      'GET /api/ongoing?page=1',
+      'GET /api/completed?page=1',
       'GET /api/search?q=query',
       'GET /api/anime/:slug',
-      'GET /api/streaming?url=episodeUrl'
+      'GET /api/episode/:episodeId',
+      'GET /api/batch/:batchId',
+      'GET /api/genres',
+      'GET /api/schedule'
     ]
   });
 });
@@ -268,7 +341,8 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`✅ Anime Scraper API running on port ${PORT}`);
+  console.log(`✅ Anime Scraper API v2.0 running on port ${PORT}`);
   console.log(`📡 Base URL: http://localhost:${PORT}`);
-  console.log(`🔗 Visit http://localhost:${PORT}/ for available endpoints`);
+  console.log(`🔗 Source: otakudesu.cloud`);
+  console.log(`📖 Visit http://localhost:${PORT}/ for documentation`);
 });
