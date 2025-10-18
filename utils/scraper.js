@@ -53,56 +53,100 @@ class AnimeScraper {
       const response = await this.api.get(iframeUrl, {
         headers: {
           'Referer': this.baseUrl,
-          'Origin': this.baseUrl
+          'Origin': this.baseUrl,
+          'Accept': '*/*'
         },
-        timeout: 15000
+        timeout: 20000
       });
       
       const html = response.data;
       const $ = cheerio.load(html);
 
-      // Method 1: Direct regex patterns for video URLs
+      // Method 0: Provider-specific FIRST (more reliable)
+      const providerData = await this.extractByProvider(iframeUrl, html, $, provider);
+      if (providerData) {
+        console.log(`✅ Provider-specific extraction successful`);
+        return providerData;
+      }
+
+      // Method 1: Aggressive regex for video URLs (more patterns)
       const videoPatterns = [
-        /https?:\/\/[^"'\s<>]+\.mp4(?:\?[^"'\s<>]*)?/gi,
-        /https?:\/\/[^"'\s<>]+\.m3u8(?:\?[^"'\s<>]*)?/gi,
-        /https?:\/\/[^"'\s<>]*(?:stream|video|cdn|media)[^"'\s<>]*\.(?:mp4|m3u8)/gi,
+        // Standard video extensions
+        /https?:\/\/[^"'\s<>]+\.mp4(?:[?#][^"'\s<>]*)?/gi,
+        /https?:\/\/[^"'\s<>]+\.m3u8(?:[?#][^"'\s<>]*)?/gi,
+        // CDN patterns
+        /https?:\/\/[^"'\s<>]*(?:stream|video|cdn|media|content|embed|player)[^"'\s<>]*\.(?:mp4|m3u8)/gi,
+        // Quality patterns (360p, 480p, etc)
+        /https?:\/\/[^"'\s<>]*(?:\d{3,4}p?)[^"'\s<>]*\.(?:mp4|m3u8)/gi,
+        // Generic video hosting patterns
+        /https?:\/\/[a-z0-9.-]+\/[^"'\s<>]*(?:video|stream|watch|play)[^"'\s<>]*\.(?:mp4|m3u8)/gi,
       ];
 
       for (const pattern of videoPatterns) {
         const matches = html.match(pattern);
         if (matches && matches.length > 0) {
-          const url = matches[0];
-          const type = url.includes('.m3u8') ? 'hls' : 'mp4';
-          console.log(`✅ Found ${type.toUpperCase()}: ${url.substring(0, 60)}...`);
-          return { url, type };
+          // Get unique URLs
+          const uniqueUrls = [...new Set(matches)];
+          for (const url of uniqueUrls) {
+            // Validate URL
+            if (this.isValidVideoUrl(url)) {
+              const type = url.includes('.m3u8') ? 'hls' : 'mp4';
+              console.log(`✅ Found ${type.toUpperCase()}: ${url.substring(0, 60)}...`);
+              return { url, type };
+            }
+          }
         }
       }
 
-      // Method 2: Parse script tags for video configs
+      // Method 2: Deep script analysis
       const scriptContents = [];
       $('script').each((i, el) => {
         const content = $(el).html();
-        if (content) scriptContents.push(content);
+        if (content && content.length > 10) scriptContents.push(content);
       });
 
       for (const script of scriptContents) {
+        // Look for base64 encoded data
+        const base64Match = script.match(/atob\(['"]([A-Za-z0-9+/=]+)['"]\)/);
+        if (base64Match) {
+          try {
+            const decoded = Buffer.from(base64Match[1], 'base64').toString();
+            const videoUrl = decoded.match(/https?:\/\/[^\s"']+\.(?:mp4|m3u8)/);
+            if (videoUrl) {
+              const url = videoUrl[0];
+              const type = url.includes('.m3u8') ? 'hls' : 'mp4';
+              console.log(`✅ Found ${type.toUpperCase()} in base64`);
+              return { url, type };
+            }
+          } catch (e) {
+            // Ignore decode errors
+          }
+        }
+
+        // Enhanced JSON patterns
         const jsonPatterns = [
-          /sources?\s*:\s*\[?\s*[{"]([^}\]]+)[}\]]/gi,
-          /file\s*:\s*["']([^"']+)["']/gi,
-          /url\s*:\s*["']([^"']+)["']/gi,
-          /src\s*:\s*["']([^"']+)["']/gi,
+          // Standard formats
+          /sources?\s*:\s*\[\s*\{[^}]*(?:file|src|url)\s*:\s*["']([^"']+)["']/gi,
+          /file\s*:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
+          /url\s*:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
+          /src\s*:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
+          // Player configs
+          /player\.source\s*=\s*["']([^"']+)["']/gi,
+          /player\.load\(['"]([^"']+)["']\)/gi,
+          /video_url\s*[:=]\s*["']([^"']+)["']/gi,
+          /stream_url\s*[:=]\s*["']([^"']+)["']/gi,
         ];
 
         for (const pattern of jsonPatterns) {
           const matches = [...script.matchAll(pattern)];
           for (const match of matches) {
             const content = match[1];
-            if (content.includes('.mp4') || content.includes('.m3u8')) {
+            if (content && (content.includes('.mp4') || content.includes('.m3u8'))) {
               const urlMatch = content.match(/https?:\/\/[^\s"']+/);
-              if (urlMatch) {
+              if (urlMatch && this.isValidVideoUrl(urlMatch[0])) {
                 const url = urlMatch[0];
                 const type = url.includes('.m3u8') ? 'hls' : 'mp4';
-                console.log(`✅ Found ${type.toUpperCase()} in script`);
+                console.log(`✅ Found ${type.toUpperCase()} in script config`);
                 return { url, type };
               }
             }
@@ -110,11 +154,15 @@ class AnimeScraper {
         }
       }
 
-      // Method 3: Video/source tags
+      // Method 3: Video/source tags with all attributes
       const videoSources = [];
-      $('video source, video').each((i, el) => {
-        const src = $(el).attr('src') || $(el).attr('data-src');
-        if (src) videoSources.push(src);
+      $('video, source, iframe').each((i, el) => {
+        const $el = $(el);
+        const attrs = ['src', 'data-src', 'data-url', 'data-file', 'data-video'];
+        for (const attr of attrs) {
+          const src = $el.attr(attr);
+          if (src) videoSources.push(src);
+        }
       });
 
       for (const src of videoSources) {
@@ -125,11 +173,11 @@ class AnimeScraper {
         }
       }
 
-      // Method 4: Provider-specific
-      const videoData = await this.extractByProvider(iframeUrl, html, $, provider);
-      if (videoData) {
-        console.log(`✅ Provider-specific extraction successful`);
-        return videoData;
+      // Method 4: Look for nested iframes
+      const nestedIframe = $('iframe[src]').first().attr('src');
+      if (nestedIframe && nestedIframe.startsWith('http') && nestedIframe !== iframeUrl) {
+        console.log(`🔄 Found nested iframe, extracting...`);
+        return await this.extractDirectVideoUrl(nestedIframe, `${provider} (nested)`);
       }
 
       console.log('❌ No direct video found');
@@ -141,27 +189,68 @@ class AnimeScraper {
     }
   }
 
+  // Validate if URL is a proper video URL
+  isValidVideoUrl(url) {
+    // Remove obvious false positives
+    const invalidPatterns = [
+      'logo', 'icon', 'thumb', 'preview', 'banner', 
+      'ad', 'analytics', 'track', 'pixel',
+      '.js', '.css', '.png', '.jpg', '.gif', '.svg'
+    ];
+    
+    return !invalidPatterns.some(pattern => url.toLowerCase().includes(pattern));
+  }
+
   async extractByProvider(url, html, $, provider) {
     const providerLower = provider.toLowerCase();
 
+    // DesuStream - Custom extraction for otakudesu's player
+    if (url.includes('desustream.info') || providerLower.includes('desustream')) {
+      console.log('🎯 Desustream detected, using custom extractor');
+      
+      // Try to find direct video URL in various formats
+      const patterns = [
+        /"file":"([^"]+)"/g,
+        /'file':'([^']+)'/g,
+        /file:\s*["']([^"']+)["']/g,
+        /source:\s*["']([^"']+)["']/g,
+        /src:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/g,
+      ];
+
+      for (const pattern of patterns) {
+        const matches = [...html.matchAll(pattern)];
+        for (const match of matches) {
+          let videoUrl = match[1];
+          // Unescape if needed
+          videoUrl = videoUrl.replace(/\\/g, '');
+          if (videoUrl.includes('.mp4') || videoUrl.includes('.m3u8')) {
+            return {
+              url: videoUrl,
+              type: videoUrl.includes('.m3u8') ? 'hls' : 'mp4'
+            };
+          }
+        }
+      }
+    }
+
     // Streamtape
-    if (providerLower.includes('streamtape')) {
-      const match = html.match(/innerHTML = "([^"]+)"/);
-      if (match) {
-        const robotLink = match[1];
-        const idMatch = url.match(/\/([^/]+)$/);
+    if (providerLower.includes('streamtape') || url.includes('streamtape')) {
+      const robotMatch = html.match(/getElementById\('robotlink'\)\.innerHTML = '([^']+)'/);
+      const tokenMatch = html.match(/token=([^&'"]+)/);
+      
+      if (robotMatch) {
+        const robotLink = robotMatch[1];
+        const idMatch = url.match(/\/e\/([^/?]+)/);
         if (idMatch) {
-          return {
-            url: `https://streamtape.com/get_video?id=${idMatch[1]}&expires=${Date.now()}&token=${robotLink}`,
-            type: 'mp4'
-          };
+          const videoUrl = `https://streamtape.com/get_video?id=${idMatch[1]}&expires=${Date.now()}&ip=&token=${robotLink}`;
+          return { url: videoUrl, type: 'mp4' };
         }
       }
     }
 
     // MP4Upload
-    if (providerLower.includes('mp4upload')) {
-      const scriptMatch = html.match(/player\.src\(\s*\{\s*type:\s*"([^"]+)",\s*src:\s*"([^"]+)"/);
+    if (providerLower.includes('mp4upload') || url.includes('mp4upload')) {
+      const scriptMatch = html.match(/player\.src\(\s*\{\s*type:\s*["']([^"']+)["'],\s*src:\s*["']([^"']+)["']/);
       if (scriptMatch) {
         return {
           url: scriptMatch[2],
@@ -171,12 +260,46 @@ class AnimeScraper {
     }
 
     // Acefile
-    if (providerLower.includes('acefile')) {
-      const match = html.match(/"file":"([^"]+)"/);
-      if (match) {
+    if (providerLower.includes('acefile') || url.includes('acefile')) {
+      const fileMatch = html.match(/"file":"([^"]+)"/);
+      if (fileMatch) {
         return {
-          url: match[1].replace(/\\/g, ''),
-          type: match[1].includes('.m3u8') ? 'hls' : 'mp4'
+          url: fileMatch[1].replace(/\\/g, ''),
+          type: fileMatch[1].includes('.m3u8') ? 'hls' : 'mp4'
+        };
+      }
+    }
+
+    //Filelions
+    if (providerLower.includes('filelions') || url.includes('filelions')) {
+      const sources = html.match(/sources:\s*\[\s*\{[^}]*file:\s*["']([^"']+)["']/);
+      if (sources) {
+        return {
+          url: sources[1],
+          type: sources[1].includes('.m3u8') ? 'hls' : 'mp4'
+        };
+      }
+    }
+
+    // VidGuard
+    if (providerLower.includes('vidguard') || url.includes('vidguard')) {
+      const sources = html.match(/sources:\s*\[\s*"([^"]+)"/);
+      if (sources) {
+        return {
+          url: sources[1],
+          type: sources[1].includes('.m3u8') ? 'hls' : 'mp4'
+        };
+      }
+    }
+
+    // StreamWish / Wishfast
+    if (providerLower.includes('streamwish') || providerLower.includes('wish') || 
+        url.includes('streamwish') || url.includes('wishfast')) {
+      const fileMatch = html.match(/file:"([^"]+)"/);
+      if (fileMatch) {
+        return {
+          url: fileMatch[1],
+          type: fileMatch[1].includes('.m3u8') ? 'hls' : 'mp4'
         };
       }
     }
