@@ -1,4 +1,4 @@
-// utils/scraper.js - FINAL HARDCORE EDITION
+// utils/scraper.js - FIXED PUPPETEER VERSION
 const axios = require('axios');
 const cheerio = require('cheerio');
 const puppeteer = require('puppeteer');
@@ -100,9 +100,13 @@ class AnimeScraper {
 
   async closeBrowser() {
     if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-      console.log('🔒 Browser closed');
+      try {
+        await this.browser.close();
+        this.browser = null;
+        console.log('🔒 Browser closed');
+      } catch (e) {
+        console.error('Error closing browser:', e.message);
+      }
     }
   }
 
@@ -255,7 +259,7 @@ class AnimeScraper {
     return !invalid.some(pattern => url.toLowerCase().includes(pattern));
   }
 
-  // PUPPETEER EXTRACTION
+  // PUPPETEER EXTRACTION - FIXED VERSION
   async extractWithPuppeteer(url, depth = 0) {
     let page = null;
     try {
@@ -290,9 +294,11 @@ class AnimeScraper {
 
       console.log(`${'  '.repeat(depth)}⏳ Loading...`);
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-      await page.waitForTimeout(3000);
+      
+      // FIXED: Use setTimeout instead of waitForTimeout
+      await new Promise(resolve => setTimeout(resolve, 3000));
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await page.waitForTimeout(1000);
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       const iframes = await page.$$eval('iframe', iframes => 
         iframes.map(iframe => iframe.src).filter(src => src && src.startsWith('http'))
@@ -335,11 +341,17 @@ class AnimeScraper {
       console.error(`${'  '.repeat(depth)}Puppeteer Error:`, error.message);
       return null;
     } finally {
-      if (page) await page.close();
+      if (page) {
+        try {
+          await page.close();
+        } catch (e) {
+          console.error('Error closing page:', e.message);
+        }
+      }
     }
   }
 
-  // AXIOS FALLBACK EXTRACTION
+  // AXIOS FALLBACK EXTRACTION (tidak berubah, sudah OK)
   async extractWithAxios(url, depth = 0) {
     try {
       if (depth > 2) return null;
