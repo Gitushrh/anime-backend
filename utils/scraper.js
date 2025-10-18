@@ -1,169 +1,265 @@
-// utils/scraper.js - Menggunakan Otakudesu Cloud API
+// utils/scraper.js - Web Scraping Otakudesu
 const axios = require('axios');
+const cheerio = require('cheerio');
 
 class AnimeScraper {
   constructor() {
+    this.baseUrl = 'https://otakudesu.cloud';
     this.api = axios.create({
-      baseURL: 'https://otakudesu.cloud',
       timeout: 30000,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Referer': 'https://otakudesu.cloud/'
       }
     });
   }
 
+  async fetchHTML(url) {
+    try {
+      const response = await this.api.get(url);
+      return cheerio.load(response.data);
+    } catch (error) {
+      console.error(`Error fetching ${url}:`, error.message);
+      throw error;
+    }
+  }
+
+  generateSlug(url) {
+    if (!url) return '';
+    const parts = url.split('/').filter(p => p);
+    return parts[parts.length - 1] || '';
+  }
+
   async getLatestAnime() {
     try {
-      console.log('📡 Fetching latest anime from Otakudesu...');
+      console.log('📡 Scraping latest anime from Otakudesu...');
       
-      const response = await this.api.get('/otakudesu/home');
-      
-      if (!response.data || !response.data.ongoing_anime) {
-        console.log('⚠️ No ongoing anime found in response');
-        return [];
-      }
+      const $ = await this.fetchHTML(`${this.baseUrl}`);
+      const animes = [];
 
-      const animes = response.data.ongoing_anime.map(anime => ({
-        id: anime.slug || anime.anime_id,
-        title: anime.title,
-        url: anime.link,
-        poster: anime.poster,
-        latestEpisode: anime.current_episode || 'Unknown',
-        source: 'otakudesu'
-      }));
+      $('.venz ul li').each((i, el) => {
+        const $el = $(el);
+        const title = $el.find('.jdlflm').text().trim();
+        const poster = $el.find('.thumbz img').attr('src');
+        const url = $el.find('.thumb a').attr('href');
+        const episode = $el.find('.epz').text().trim();
+
+        if (title && url) {
+          animes.push({
+            id: this.generateSlug(url),
+            title,
+            poster: poster || '',
+            url,
+            latestEpisode: episode || 'Unknown',
+            source: 'otakudesu'
+          });
+        }
+      });
 
       console.log(`✅ Found ${animes.length} latest anime`);
       return animes;
     } catch (error) {
-      console.error('✗ Error fetching latest anime:', error.message);
+      console.error('✗ Error scraping latest anime:', error.message);
       return [];
     }
   }
 
   async getPopularAnime() {
     try {
-      console.log('⭐ Fetching popular anime...');
+      console.log('⭐ Scraping popular anime...');
       
-      const response = await this.api.get('/otakudesu/home');
-      
-      if (!response.data || !response.data.popular_week) {
-        console.log('⚠️ No popular anime found');
-        return [];
-      }
+      const $ = await this.fetchHTML(`${this.baseUrl}`);
+      const animes = [];
 
-      const animes = response.data.popular_week.map(anime => ({
-        id: anime.slug || anime.anime_id,
-        title: anime.title,
-        url: anime.link,
-        poster: anime.poster,
-        source: 'otakudesu'
-      }));
+      $('.rseries .rapi .venz ul li').each((i, el) => {
+        const $el = $(el);
+        const title = $el.find('.jdlflm').text().trim();
+        const poster = $el.find('.thumbz img').attr('src');
+        const url = $el.find('.thumb a').attr('href');
+
+        if (title && url) {
+          animes.push({
+            id: this.generateSlug(url),
+            title,
+            poster: poster || '',
+            url,
+            source: 'otakudesu'
+          });
+        }
+      });
 
       console.log(`✅ Found ${animes.length} popular anime`);
       return animes;
     } catch (error) {
-      console.error('✗ Error fetching popular anime:', error.message);
+      console.error('✗ Error scraping popular anime:', error.message);
       return [];
     }
   }
 
   async getOngoingAnime(page = 1) {
     try {
-      console.log(`▶️ Fetching ongoing anime (page ${page})...`);
+      console.log(`▶️ Scraping ongoing anime (page ${page})...`);
       
-      const response = await this.api.get('/otakudesu/ongoing', {
-        params: { page }
+      const url = page === 1 
+        ? `${this.baseUrl}/ongoing-anime`
+        : `${this.baseUrl}/ongoing-anime/page/${page}`;
+      
+      const $ = await this.fetchHTML(url);
+      const animes = [];
+
+      $('.venz ul li').each((i, el) => {
+        const $el = $(el);
+        const title = $el.find('.jdlflm').text().trim();
+        const poster = $el.find('.thumbz img').attr('src');
+        const url = $el.find('.thumb a').attr('href');
+        const episode = $el.find('.epz').text().trim();
+
+        if (title && url) {
+          animes.push({
+            id: this.generateSlug(url),
+            title,
+            poster: poster || '',
+            url,
+            latestEpisode: episode || 'Unknown',
+            source: 'otakudesu'
+          });
+        }
       });
-
-      if (!response.data || !response.data.ongoing) {
-        return [];
-      }
-
-      const animes = response.data.ongoing.map(anime => ({
-        id: anime.slug || anime.anime_id,
-        title: anime.title,
-        url: anime.link,
-        poster: anime.poster,
-        latestEpisode: anime.current_episode || 'Unknown',
-        day: anime.day,
-        source: 'otakudesu'
-      }));
 
       console.log(`✅ Found ${animes.length} ongoing anime`);
       return animes;
     } catch (error) {
-      console.error('✗ Error fetching ongoing anime:', error.message);
+      console.error('✗ Error scraping ongoing anime:', error.message);
+      return [];
+    }
+  }
+
+  async getCompletedAnime(page = 1) {
+    try {
+      console.log(`✓ Scraping completed anime (page ${page})...`);
+      
+      const url = page === 1 
+        ? `${this.baseUrl}/complete-anime`
+        : `${this.baseUrl}/complete-anime/page/${page}`;
+      
+      const $ = await this.fetchHTML(url);
+      const animes = [];
+
+      $('.venz ul li').each((i, el) => {
+        const $el = $(el);
+        const title = $el.find('.jdlflm').text().trim();
+        const poster = $el.find('.thumbz img').attr('src');
+        const url = $el.find('.thumb a').attr('href');
+        const episode = $el.find('.epz').text().trim();
+
+        if (title && url) {
+          animes.push({
+            id: this.generateSlug(url),
+            title,
+            poster: poster || '',
+            url,
+            episodes: episode || 'Unknown',
+            source: 'otakudesu'
+          });
+        }
+      });
+
+      console.log(`✅ Found ${animes.length} completed anime`);
+      return animes;
+    } catch (error) {
+      console.error('✗ Error scraping completed anime:', error.message);
       return [];
     }
   }
 
   async getAnimeDetail(animeId) {
     try {
-      console.log(`📖 Fetching anime detail: ${animeId}`);
+      console.log(`📖 Scraping anime detail: ${animeId}`);
       
-      const response = await this.api.get(`/otakudesu/anime/${animeId}`);
-      const data = response.data;
+      const $ = await this.fetchHTML(`${this.baseUrl}/anime/${animeId}`);
+      
+      const title = $('.jdlrx h1').text().trim();
+      const poster = $('.fotoanime img').attr('src');
+      const synopsis = $('.sinopc p').text().trim();
+      
+      const info = {};
+      $('.infozingle p').each((i, el) => {
+        const text = $(el).text();
+        const [key, ...valueParts] = text.split(':');
+        if (key && valueParts.length > 0) {
+          const cleanKey = key.trim();
+          const cleanValue = valueParts.join(':').trim();
+          info[cleanKey] = cleanValue;
+        }
+      });
 
-      if (!data) {
-        return null;
-      }
+      const genres = [];
+      $('.infozingle p:contains("Genre") span a').each((i, el) => {
+        genres.push($(el).text().trim());
+      });
+
+      const episodes = [];
+      $('.episodelist ul li').each((i, el) => {
+        const $el = $(el);
+        const episodeTitle = $el.find('span a').text().trim();
+        const episodeUrl = $el.find('span a').attr('href');
+        const date = $el.find('.zeebr').text().trim();
+
+        if (episodeUrl) {
+          episodes.push({
+            number: episodeTitle,
+            date,
+            url: this.generateSlug(episodeUrl)
+          });
+        }
+      });
 
       const detail = {
         id: animeId,
-        title: data.title,
-        poster: data.poster,
-        synopsis: data.synopsis || 'No synopsis available',
-        episodes: (data.episode_list || []).map(ep => ({
-          number: ep.episode,
-          date: ep.date,
-          url: ep.slug
-        })),
-        batch: data.batch || null,
-        info: {
-          'Japanese': data.detail?.japanese || 'Unknown',
-          'Type': data.detail?.type || 'Unknown',
-          'Episodes': data.detail?.total_episode || 'Unknown',
-          'Status': data.detail?.status || 'Unknown',
-          'Aired': data.detail?.release_date || 'Unknown',
-          'Premiered': data.detail?.season || 'Unknown',
-          'Studio': data.detail?.studio || 'Unknown',
-          'Duration': data.detail?.duration || 'Unknown',
-          'Score': data.detail?.score || 'N/A'
-        },
-        genres: data.genres || [],
+        title,
+        poster: poster || '',
+        synopsis: synopsis || 'No synopsis available',
+        episodes,
+        info,
+        genres,
         source: 'otakudesu'
       };
 
       console.log(`✅ Found detail for ${detail.title}`);
       return detail;
     } catch (error) {
-      console.error('✗ Error fetching anime detail:', error.message);
+      console.error('✗ Error scraping anime detail:', error.message);
       return null;
     }
   }
 
   async getStreamingLink(episodeId) {
     try {
-      console.log(`🎬 Fetching episode: ${episodeId}`);
+      console.log(`🎬 Scraping episode: ${episodeId}`);
       
-      const response = await this.api.get(`/otakudesu/episode/${episodeId}`);
-      const data = response.data;
+      const $ = await this.fetchHTML(`${this.baseUrl}/episode/${episodeId}`);
+      const streamLinks = [];
 
-      if (!data || !data.stream_link) {
-        return [];
-      }
+      $('.mirrorstream ul li').each((i, el) => {
+        const $el = $(el);
+        const provider = $el.find('a').text().trim();
+        const url = $el.find('a').attr('href');
 
-      const streamLinks = data.stream_link.map(server => ({
-        provider: server.title || 'Unknown',
-        url: server.link,
-        type: 'streaming'
-      }));
+        if (url) {
+          streamLinks.push({
+            provider: provider || 'Unknown',
+            url,
+            type: 'streaming'
+          });
+        }
+      });
 
       console.log(`✅ Found ${streamLinks.length} streaming links`);
       return streamLinks;
     } catch (error) {
-      console.error('✗ Error fetching streaming links:', error.message);
+      console.error('✗ Error scraping streaming links:', error.message);
       return [];
     }
   }
@@ -172,26 +268,40 @@ class AnimeScraper {
     try {
       console.log(`🔍 Searching: "${query}"`);
       
-      const response = await this.api.get('/otakudesu/search', {
-        params: { q: query }
+      const $ = await this.fetchHTML(`${this.baseUrl}/?s=${encodeURIComponent(query)}&post_type=anime`);
+      const results = [];
+
+      $('.chivsrc li').each((i, el) => {
+        const $el = $(el);
+        const title = $el.find('h2 a').text().trim();
+        const poster = $el.find('img').attr('src');
+        const url = $el.find('h2 a').attr('href');
+        const genres = [];
+        
+        $el.find('.set').each((j, genreEl) => {
+          const genreText = $(genreEl).text().trim();
+          if (genreText.includes('Genres')) {
+            const genreList = genreText.replace('Genres :', '').trim().split(',');
+            genres.push(...genreList.map(g => g.trim()));
+          }
+        });
+
+        const status = $el.find('.set:contains("Status")').text().replace('Status :', '').trim();
+        const rating = $el.find('.set:contains("Rating")').text().replace('Rating :', '').trim();
+
+        if (title && url) {
+          results.push({
+            id: this.generateSlug(url),
+            title,
+            poster: poster || '',
+            url,
+            genres,
+            status,
+            rating,
+            source: 'otakudesu'
+          });
+        }
       });
-
-      console.log('Search response:', JSON.stringify(response.data, null, 2));
-
-      if (!response.data || !response.data.data) {
-        return [];
-      }
-
-      const results = response.data.data.map(anime => ({
-        id: anime.slug || anime.anime_id,
-        title: anime.title,
-        url: anime.link,
-        poster: anime.poster,
-        genres: anime.genres || [],
-        status: anime.status,
-        rating: anime.rating,
-        source: 'otakudesu'
-      }));
 
       console.log(`✅ Found ${results.length} results for "${query}"`);
       return results;
@@ -203,82 +313,105 @@ class AnimeScraper {
 
   async getGenres() {
     try {
-      console.log('🏷️ Fetching genres...');
+      console.log('🏷️ Scraping genres...');
       
-      const response = await this.api.get('/otakudesu/genres');
-      
-      if (!response.data || !response.data.genres) {
-        return [];
-      }
+      const $ = await this.fetchHTML(`${this.baseUrl}/genre-list`);
+      const genres = [];
 
-      const genres = response.data.genres.map(genre => ({
-        id: genre.slug,
-        name: genre.title
-      }));
+      $('.genres li a').each((i, el) => {
+        const $el = $(el);
+        const name = $el.text().trim();
+        const url = $el.attr('href');
+
+        if (name && url) {
+          genres.push({
+            id: this.generateSlug(url),
+            name
+          });
+        }
+      });
 
       console.log(`✅ Found ${genres.length} genres`);
       return genres;
     } catch (error) {
-      console.error('✗ Error fetching genres:', error.message);
+      console.error('✗ Error scraping genres:', error.message);
       return [];
     }
   }
 
   async getSchedule() {
     try {
-      console.log('📅 Fetching schedule...');
+      console.log('📅 Scraping schedule...');
       
-      const response = await this.api.get('/otakudesu/schedule');
-      const data = response.data || {};
+      const $ = await this.fetchHTML(`${this.baseUrl}/jadwal-rilis`);
+      const schedule = {};
 
-      console.log('✅ Schedule fetched');
-      return data;
-    } catch (error) {
-      console.error('✗ Error fetching schedule:', error.message);
-      return {};
-    }
-  }
+      $('.kglist321').each((i, el) => {
+        const $el = $(el);
+        const day = $el.find('h2').text().trim();
+        const animes = [];
 
-  async getCompletedAnime(page = 1) {
-    try {
-      console.log(`✓ Fetching completed anime (page ${page})...`);
-      
-      const response = await this.api.get('/otakudesu/completed', {
-        params: { page }
+        $el.find('ul li').each((j, animeEl) => {
+          const $anime = $(animeEl);
+          const title = $anime.find('a').text().trim();
+          const url = $anime.find('a').attr('href');
+
+          if (title && url) {
+            animes.push({
+              id: this.generateSlug(url),
+              title,
+              url
+            });
+          }
+        });
+
+        if (day) {
+          schedule[day] = animes;
+        }
       });
 
-      if (!response.data || !response.data.data) {
-        return [];
-      }
-
-      const animes = response.data.data.map(anime => ({
-        id: anime.slug,
-        title: anime.title,
-        url: anime.link,
-        poster: anime.poster,
-        score: anime.score,
-        source: 'otakudesu'
-      }));
-
-      console.log(`✅ Found ${animes.length} completed anime`);
-      return animes;
+      console.log('✅ Schedule scraped');
+      return schedule;
     } catch (error) {
-      console.error('✗ Error fetching completed anime:', error.message);
-      return [];
+      console.error('✗ Error scraping schedule:', error.message);
+      return {};
     }
   }
 
   async getBatchDownload(batchId) {
     try {
-      console.log(`📦 Fetching batch: ${batchId}`);
+      console.log(`📦 Scraping batch: ${batchId}`);
       
-      const response = await this.api.get(`/otakudesu/batch/${batchId}`);
-      const data = response.data;
+      const $ = await this.fetchHTML(`${this.baseUrl}/batch/${batchId}`);
+      
+      const title = $('.jdlrx h1').text().trim();
+      const downloads = {};
 
-      console.log('✅ Batch data fetched');
-      return data;
+      $('.download ul li').each((i, el) => {
+        const $el = $(el);
+        const quality = $el.find('strong').text().trim();
+        const links = [];
+
+        $el.find('a').each((j, linkEl) => {
+          const $link = $(linkEl);
+          links.push({
+            provider: $link.text().trim(),
+            url: $link.attr('href')
+          });
+        });
+
+        if (quality) {
+          downloads[quality] = links;
+        }
+      });
+
+      console.log('✅ Batch data scraped');
+      return {
+        title,
+        downloads
+      };
     } catch (error) {
-      console.error('✗ Error fetching batch:', error.message);
+      console.error('✗ Error scraping batch:', error.message);
       return null;
     }
   }

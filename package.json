@@ -1,7 +1,7 @@
 {
   "name": "anime_app_backend",
-  "version": "1.0.0",
-  "description": "Backend for Anime Streaming App using Otakudesu Official API",
+  "version": "2.0.0",
+  "description": "Backend for Anime Streaming App - Web Scraping Otakudesu",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -12,12 +12,14 @@
     "scraper",
     "api",
     "streaming",
-    "otakudesu"
+    "otakudesu",
+    "cheerio"
   ],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "axios": "^1.7.2",
+    "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
     "express": "^4.18.2"
   },
