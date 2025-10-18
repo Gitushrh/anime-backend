@@ -1,3 +1,8 @@
+// Polyfill for environments where global File is missing (Node < 20)
+if (typeof globalThis.File === "undefined") {
+  globalThis.File = class File {};
+}
+
 require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -33,6 +38,10 @@ let db;
 
 async function initializeDatabase() {
   try {
+    if (!process.env.MYSQLHOST || !process.env.MYSQLUSER || !process.env.MYSQLDATABASE) {
+      console.warn("⚠️  MYSQL env vars not set; starting without database features.");
+      return false;
+    }
     console.log(`Attempting to connect to MySQL at ${process.env.MYSQLHOST}:${process.env.MYSQLPORT}...`);
     
     db = mysql.createPool({
@@ -90,15 +99,27 @@ app.get("/api/health", (req, res) => {
 
 /* ==================== ANIME SCRAPING ROUTES ==================== */
 
+// Order matters: specific routes before generic "/api/anime/:slug"
 app.get("/api/anime/home", scraper.homepage);
 app.get("/api/anime/schedule", scraper.schedule);
 app.get("/api/anime/genre/:genre", scraper.genre);
 app.get("/api/anime/release-year/:year", scraper.releaseYear);
-app.get("/api/anime/:slug", scraper.detailAnime);
 app.get("/api/anime/episode/:slug", scraper.detailEpisode);
 app.get("/api/anime/search/:query", scraper.search);
 app.get("/api/anime/ongoing", scraper.ongoing);
 app.get("/api/anime/season/ongoing", scraper.seasonOngoing);
+app.get("/api/anime/:slug", scraper.detailAnime);
+
+// Aliases to match Flutter BASE_URL like /anime/*
+app.get("/anime/home", scraper.homepage);
+app.get("/anime/schedule", scraper.schedule);
+app.get("/anime/genre/:genre", scraper.genre);
+app.get("/anime/release-year/:year", scraper.releaseYear);
+app.get("/anime/anime/:slug", scraper.detailAnime);
+app.get("/anime/episode/:slug", scraper.detailEpisode);
+app.get("/anime/search/:query", scraper.search);
+app.get("/anime/ongoing", scraper.ongoing);
+app.get("/anime/season/ongoing", scraper.seasonOngoing);
 
 /* ==================== HISTORY MANAGEMENT ROUTES ==================== */
 
@@ -107,6 +128,10 @@ app.post("/api/history", async (req, res) => {
   
   if (!deviceId || !episodeSlug) {
     return res.status(400).json({ error: "deviceId and episodeSlug are required" });
+  }
+
+  if (!db) {
+    return res.status(503).json({ error: "Database is not configured" });
   }
 
   try {
@@ -132,6 +157,10 @@ app.get("/api/history", async (req, res) => {
     return res.status(400).json({ error: "deviceId query parameter is required" });
   }
 
+  if (!db) {
+    return res.status(503).json({ error: "Database is not configured" });
+  }
+
   try {
     const [rows] = await db.execute(
       `SELECT * FROM history WHERE deviceId = ? ORDER BY updatedAt DESC`,
@@ -150,6 +179,10 @@ app.get("/api/history/:episodeSlug", async (req, res) => {
   
   if (!deviceId) {
     return res.status(400).json({ error: "deviceId query parameter is required" });
+  }
+
+  if (!db) {
+    return res.status(503).json({ error: "Database is not configured" });
   }
 
   try {
@@ -176,6 +209,10 @@ app.delete("/api/history", async (req, res) => {
     return res.status(400).json({ error: "deviceId and episodeSlug are required" });
   }
 
+  if (!db) {
+    return res.status(503).json({ error: "Database is not configured" });
+  }
+
   try {
     const result = await db.execute(
       `DELETE FROM history WHERE deviceId = ? AND episodeSlug = ?`,
@@ -198,6 +235,10 @@ app.delete("/api/history/device/:deviceId", async (req, res) => {
   
   if (!deviceId) {
     return res.status(400).json({ error: "deviceId is required" });
+  }
+
+  if (!db) {
+    return res.status(503).json({ error: "Database is not configured" });
   }
 
   try {
@@ -224,11 +265,8 @@ app.use((err, req, res, next) => {
 
 async function start() {
   const dbReady = await initializeDatabase();
-  
   if (!dbReady) {
-    console.error("❌ Failed to initialize database. Retrying in 10 seconds...");
-    setTimeout(start, 10000);
-    return;
+    console.warn("⚠️  Continuing without database connection. History endpoints will be disabled.");
   }
 
   app.listen(PORT, "0.0.0.0", () => {
