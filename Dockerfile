@@ -1,38 +1,42 @@
-# Use official Node.js 20 Alpine image
+# Build stage
+FROM node:20-alpine AS deps
+
+WORKDIR /app
+COPY package*.json ./
+
+# Install only npm dependencies (no puppeteer download yet)
+RUN npm ci --production && npm cache clean --force
+
+# Production stage
 FROM node:20-alpine
 
-# Install Chromium and dependencies
+# Install minimal chromium runtime libs only
 RUN apk add --no-cache \
     chromium \
     nss \
     freetype \
     harfbuzz \
     ca-certificates \
-    ttf-freefont
+    ttf-freefont \
+    libxss1
 
-# Set environment variables
+# Critical: Tell Puppeteer to use system Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
     NODE_ENV=production
 
-# Create app directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy pre-installed node_modules from builder
+COPY --from=deps /app/node_modules ./node_modules
 
-# Install dependencies (changed from npm ci to npm install)
-RUN npm install --production --no-optional
+# Copy app code (smaller, faster)
+COPY server.js .
+COPY utils/scraper.js ./utils/scraper.js
 
-# Copy application files
-COPY . .
-
-# Expose port
 EXPOSE 5000
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:5000', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+  CMD node -e "require('http').get('http://localhost:5000', (r) => {if(r.statusCode === 200) process.exit(0); else process.exit(1)})"
 
-# Start application
 CMD ["node", "server.js"]
