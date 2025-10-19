@@ -29,7 +29,7 @@ app.get('/', (req, res) => {
   res.json({
     status: 'OK',
     message: 'Sukinime API - Sankavollerei Backend',
-    version: '4.0.0',
+    version: '5.0.0',
     apiSource: 'Sankavollerei API',
     routes: {
       home: 'GET /otakudesu/home',
@@ -57,8 +57,6 @@ app.get('/otakudesu/home', async (req, res) => {
     
     if (response.data && response.data.data) {
       const data = response.data.data;
-      
-      // Transform data
       const homeList = [];
       
       // Gabungkan semua section (ongoing, complete)
@@ -98,23 +96,25 @@ app.get('/otakudesu/schedule', async (req, res) => {
     const response = await axios.get(`${sankaBaseUrl}/schedule`, { timeout: 20000 });
     
     if (response.data && response.data.data) {
-      const scheduleData = response.data.data;
+      const rawData = response.data.data;
       
-      // Map English to Indonesian day names
-      const dayMap = {
-        'monday': 'Senin',
-        'tuesday': 'Selasa',
-        'wednesday': 'Rabu',
-        'thursday': 'Kamis',
-        'friday': 'Jumat',
-        'saturday': 'Sabtu',
-        'sunday': 'Minggu'
-      };
-      
+      // Transform schedule format
       const schedule = {};
-      Object.keys(scheduleData).forEach(day => {
-        const dayName = dayMap[day.toLowerCase()] || day;
-        schedule[dayName] = scheduleData[day] || [];
+      
+      // rawData is an object with numeric keys (0, 1, 2, etc)
+      Object.values(rawData).forEach(dayData => {
+        if (dayData && dayData.day && dayData.anime_list) {
+          const dayName = dayData.day; // Already in Indonesian (Senin, Selasa, etc)
+          
+          // Transform anime list
+          schedule[dayName] = dayData.anime_list.map(anime => ({
+            id: anime.slug,
+            title: anime.anime_name || anime.title,
+            poster: anime.poster,
+            animeId: anime.slug,
+            url: anime.url
+          }));
+        }
       });
       
       return res.json({
@@ -172,7 +172,24 @@ app.get('/otakudesu/anime', async (req, res) => {
     });
     
     if (response.data && response.data.data) {
-      const allAnime = response.data.data;
+      let allAnime = response.data.data;
+      
+      // Check if data is object with anime array
+      if (!Array.isArray(allAnime) && allAnime.anime) {
+        allAnime = allAnime.anime;
+      }
+      
+      // Ensure it's an array
+      if (!Array.isArray(allAnime)) {
+        console.error('Data is not an array:', typeof allAnime);
+        return res.json({
+          success: true,
+          page: parseInt(page),
+          count: 0,
+          data: [],
+          source: 'sankavollerei'
+        });
+      }
       
       // Pagination manual (20 items per page)
       const itemsPerPage = 20;
@@ -222,11 +239,30 @@ app.get('/otakudesu/ongoing', async (req, res) => {
     });
     
     if (response.data && response.data.data) {
+      let animeData = response.data.data;
+      
+      // Check if data contains ongoingAnimeData
+      if (animeData.ongoingAnimeData && Array.isArray(animeData.ongoingAnimeData)) {
+        animeData = animeData.ongoingAnimeData;
+      }
+      
+      // Ensure it's an array
+      if (!Array.isArray(animeData)) {
+        console.error('Ongoing data is not an array');
+        return res.json({
+          success: true,
+          page: parseInt(page),
+          count: 0,
+          data: [],
+          source: 'sankavollerei'
+        });
+      }
+      
       return res.json({
         success: true,
         page: parseInt(page),
-        count: response.data.data.length,
-        data: response.data.data,
+        count: animeData.length,
+        data: animeData,
         source: 'sankavollerei'
       });
     }
@@ -261,11 +297,30 @@ app.get('/otakudesu/completed', async (req, res) => {
     });
     
     if (response.data && response.data.data) {
+      let animeData = response.data.data;
+      
+      // Check if data contains completeAnimeData
+      if (animeData.completeAnimeData && Array.isArray(animeData.completeAnimeData)) {
+        animeData = animeData.completeAnimeData;
+      }
+      
+      // Ensure it's an array
+      if (!Array.isArray(animeData)) {
+        console.error('Completed data is not an array');
+        return res.json({
+          success: true,
+          page: parseInt(page),
+          count: 0,
+          data: [],
+          source: 'sankavollerei'
+        });
+      }
+      
       return res.json({
         success: true,
         page: parseInt(page),
-        count: response.data.data.length,
-        data: response.data.data,
+        count: animeData.length,
+        data: animeData,
         source: 'sankavollerei'
       });
     }
@@ -342,12 +397,32 @@ app.get('/otakudesu/genres/:slug', async (req, res) => {
     });
     
     if (response.data && response.data.data) {
+      let genreData = response.data.data;
+      
+      // Check if data contains anime array
+      if (genreData.anime && Array.isArray(genreData.anime)) {
+        genreData = genreData.anime;
+      }
+      
+      // Ensure it's an array
+      if (!Array.isArray(genreData)) {
+        console.error('Genre data is not an array');
+        return res.json({
+          success: true,
+          genre: slug,
+          page: parseInt(page),
+          count: 0,
+          data: [],
+          source: 'sankavollerei'
+        });
+      }
+      
       return res.json({
         success: true,
         genre: slug,
         page: parseInt(page),
-        count: response.data.data.length,
-        data: response.data.data,
+        count: genreData.length,
+        data: genreData,
         source: 'sankavollerei'
       });
     }
@@ -591,7 +666,7 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║  🎌 SUKINIME API v4.0.0                                   ║
+║  🎌 SUKINIME API v5.0.0                                   ║
 ╠════════════════════════════════════════════════════════════╣
 ║  📡 Port: ${PORT.toString().padEnd(48)} ║
 ║  🔗 Source: Sankavollerei API                             ║
@@ -599,6 +674,7 @@ const server = app.listen(PORT, () => {
 ╠════════════════════════════════════════════════════════════╣
 ║  🚀 Status: Ready (Production)                            ║
 ║  📊 Features: Search, Pagination, Streaming               ║
+║  🔧 Fixed: Response parsing for all endpoints             ║
 ╚════════════════════════════════════════════════════════════╝
   `);
 });
