@@ -75,11 +75,46 @@ app.get('/otakudesu/home', async (req, res) => {
 app.get('/otakudesu/schedule', async (req, res) => {
   try {
     const axios = require('axios');
-    const cheerio = require('cheerio');
     
+    // Coba dari wajik API dulu (lebih stabil)
+    try {
+      console.log('📅 Fetching schedule from wajik-anime-api...');
+      const response = await axios.get('https://wajik-anime-api.vercel.app/otakudesu/schedule', {
+        timeout: 30000
+      });
+      
+      if (response.data && response.data.data && response.data.data.days) {
+        const schedule = {};
+        
+        response.data.data.days.forEach(dayObj => {
+          if (dayObj.day && dayObj.animeList) {
+            schedule[dayObj.day] = dayObj.animeList.map(anime => ({
+              id: anime.animeId || '',
+              title: anime.title || '',
+              url: anime.otakudesuUrl || `https://otakudesu.cloud${anime.href}`,
+              href: anime.href || ''
+            }));
+          }
+        });
+        
+        if (Object.keys(schedule).length > 0) {
+          return res.json({
+            success: true,
+            count: Object.keys(schedule).length,
+            data: schedule,
+            message: 'OK (from wajik-api)'
+          });
+        }
+      }
+    } catch (fallbackError) {
+      console.log('⚠️ Wajik API failed, trying direct scrape:', fallbackError.message);
+    }
+
+    // Fallback: Scrape langsung dari otakudesu
+    const cheerio = require('cheerio');
     const response = await axios.get('https://otakudesu.cloud/jadwal', {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': 'https://otakudesu.cloud/'
       },
       timeout: 30000
@@ -87,74 +122,63 @@ app.get('/otakudesu/schedule', async (req, res) => {
     
     const $ = cheerio.load(response.data);
     const schedule = {};
-    
-    // Parse each day section
-    // Look for day headers and their anime lists
     const dayMap = {
-      'Senin': 'Monday',
-      'Selasa': 'Tuesday',
-      'Rabu': 'Wednesday',
-      'Kamis': 'Thursday',
-      'Jumat': 'Friday',
-      'Sabtu': 'Saturday',
-      'Minggu': 'Sunday'
+      'Senin': 'Senin', 'Selasa': 'Selasa', 'Rabu': 'Rabu',
+      'Kamis': 'Kamis', 'Jumat': 'Jumat', 'Sabtu': 'Sabtu', 'Minggu': 'Minggu'
     };
 
-    // Try multiple selector patterns
-    $('[class*="jadwal"], [class*="schedule"]').each((i, el) => {
-      const $el = $(el);
-      
-      // Get day title
-      let dayTitle = $el.find('h2, h3, .day-title, [class*="day"]').text().trim();
-      if (!dayTitle) {
-        dayTitle = $el.find('strong').text().trim();
-      }
-      
-      const englishDay = dayMap[dayTitle] || dayTitle;
-      if (!englishDay) return;
-      
+    $('h2, h3, strong').each((i, dayEl) => {
+      const dayText = $(dayEl).text().trim();
+      if (!dayMap[dayText]) return;
+
       const animes = [];
-      
-      // Get anime list items
-      $el.find('li, [class*="anime"]').each((idx, liEl) => {
-        const $li = $(liEl);
-        const link = $li.find('a').first();
-        const title = link.text().trim();
-        const href = link.attr('href') || '';
-        const id = href.split('/').filter(p => p).pop() || '';
-        
-        if (title && id) {
-          animes.push({
-            id,
-            title,
-            url: `https://otakudesu.cloud${href}`
-          });
+      let $current = $(dayEl).next();
+      let depth = 0;
+
+      while ($current.length > 0 && depth < 20) {
+        if ($current.is('h2, h3, h4, strong')) {
+          const nextText = $current.text().trim();
+          if (dayMap[nextText] || (!dayText.includes(nextText))) break;
         }
-      });
-      
+
+        $current.find('a[href*="/anime/"]').each((idx, linkEl) => {
+          const title = $(linkEl).text().trim();
+          const href = $(linkEl).attr('href') || '';
+          const id = href.split('/').filter(p => p).pop() || '';
+          
+          if (title && id && title.length > 2) {
+            animes.push({
+              id,
+              title,
+              href,
+              url: href.startsWith('http') ? href : `https://otakudesu.cloud${href}`
+            });
+          }
+        });
+
+        if (animes.length > 0) break;
+        $current = $current.next();
+        depth++;
+      }
+
       if (animes.length > 0) {
-        schedule[englishDay] = animes;
+        schedule[dayText] = animes;
       }
     });
 
-    // Fallback: If no schedule found, return placeholder
-    if (Object.keys(schedule).length === 0) {
-      console.warn('No schedule data found, site structure may have changed');
-      return res.json({ 
-        success: false,
-        data: {},
-        message: 'Schedule parsing failed - site structure may have changed'
-      });
-    }
-    
-    res.json({ 
-      success: true, 
-      data: schedule 
+    const hasData = Object.keys(schedule).length > 0;
+    res.json({
+      success: hasData,
+      count: Object.keys(schedule).length,
+      data: schedule,
+      message: hasData ? 'OK' : 'No data'
     });
+
   } catch (error) {
     console.error('Error /otakudesu/schedule:', error.message);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
+      count: 0,
       error: 'Failed to fetch schedule',
       message: error.message,
       data: {}
@@ -221,11 +245,39 @@ app.get('/otakudesu/anime', async (req, res) => {
 app.get('/otakudesu/genres', async (req, res) => {
   try {
     const axios = require('axios');
-    const cheerio = require('cheerio');
     
+    // Coba dari wajik API dulu
+    try {
+      console.log('🎭 Fetching genres from wajik-anime-api...');
+      const response = await axios.get('https://wajik-anime-api.vercel.app/otakudesu/genres', {
+        timeout: 30000
+      });
+      
+      if (response.data && response.data.data && response.data.data.genreList) {
+        const genres = response.data.data.genreList.map(genre => ({
+          id: genre.genreId || '',
+          name: genre.title || '',
+          url: genre.otakudesuUrl || `https://otakudesu.cloud${genre.href}`
+        }));
+        
+        if (genres.length > 0) {
+          return res.json({
+            success: true,
+            count: genres.length,
+            data: genres,
+            message: 'OK (from wajik-api)'
+          });
+        }
+      }
+    } catch (fallbackError) {
+      console.log('⚠️ Wajik API failed, trying direct scrape:', fallbackError.message);
+    }
+
+    // Fallback: Scrape langsung
+    const cheerio = require('cheerio');
     const response = await axios.get('https://otakudesu.cloud/genres', {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': 'https://otakudesu.cloud/'
       },
       timeout: 30000
@@ -233,56 +285,35 @@ app.get('/otakudesu/genres', async (req, res) => {
     
     const $ = cheerio.load(response.data);
     const genres = [];
+    const seen = new Set();
     
-    // Try multiple selector patterns for genre links
-    const selectors = [
-      'a.genretag',
-      'a[href*="/genres/"]',
-      '[class*="genre"] a',
-      '.genre-list a',
-      'a[data-genre]'
-    ];
-    
-    let found = false;
-    
-    for (const selector of selectors) {
-      $(selector).each((i, el) => {
-        const $el = $(el);
-        const name = $el.text().trim();
-        const href = $el.attr('href') || '';
-        
-        // Extract genre ID from URL
-        const id = href.split('/').filter(p => p).pop() || '';
-        
-        if (name && id && id !== 'genres') {
-          // Avoid duplicates
-          if (!genres.some(g => g.id === id)) {
-            genres.push({
-              id,
-              name,
-              url: `https://otakudesu.cloud${href}`
-            });
-            found = true;
-          }
-        }
-      });
+    $('a[href*="/genres/"]').each((i, el) => {
+      const name = $(el).text().trim();
+      const href = $(el).attr('href') || '';
+      const id = href.split('/').filter(p => p).pop() || '';
       
-      if (found) break;
-    }
-    
-    if (genres.length === 0) {
-      console.warn('No genres found, site structure may have changed');
-    }
-    
-    res.json({ 
-      success: genres.length > 0, 
-      count: genres.length,
-      data: genres 
+      if (name && id && id !== 'genres' && !seen.has(id)) {
+        seen.add(id);
+        genres.push({
+          id,
+          name,
+          url: href.startsWith('http') ? href : `https://otakudesu.cloud${href}`
+        });
+      }
     });
+
+    res.json({
+      success: genres.length > 0,
+      count: genres.length,
+      data: genres,
+      message: genres.length > 0 ? 'OK' : 'No genres'
+    });
+
   } catch (error) {
     console.error('Error /otakudesu/genres:', error.message);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
+      count: 0,
       error: 'Failed to fetch genres',
       message: error.message,
       data: []
@@ -406,25 +437,93 @@ app.get('/otakudesu/search', async (req, res) => {
     const { q } = req.query;
     
     if (!q || q.trim().length === 0) {
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         error: 'Query parameter (q) is required',
         example: '/otakudesu/search?q=naruto'
       });
     }
     
-    const results = await scraper.searchAnime(q);
+    const axios = require('axios');
     
-    res.json({ 
-      success: true, 
+    // Coba dari wajik API dulu
+    try {
+      console.log(`🔍 Searching "${q}" from wajik-anime-api...`);
+      const response = await axios.get(`https://wajik-anime-api.vercel.app/otakudesu/search/${encodeURIComponent(q)}`, {
+        timeout: 30000
+      });
+      
+      if (response.data && response.data.data && response.data.data.animeList) {
+        const results = response.data.data.animeList.map(anime => ({
+          id: anime.animeId || '',
+          title: anime.title || '',
+          poster: anime.posterImage || '',
+          url: anime.otakudesuUrl || `https://otakudesu.cloud${anime.href}`,
+          source: 'otakudesu'
+        }));
+        
+        if (results.length > 0) {
+          return res.json({
+            success: true,
+            query: q,
+            count: results.length,
+            data: results,
+            message: 'OK (from wajik-api)'
+          });
+        }
+      }
+    } catch (fallbackError) {
+      console.log('⚠️ Wajik search failed, trying direct scrape:', fallbackError.message);
+    }
+
+    // Fallback: Scrape langsung
+    const cheerio = require('cheerio');
+    const response = await axios.get(`https://otakudesu.cloud/?s=${encodeURIComponent(q)}&post_type=anime`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://otakudesu.cloud/'
+      },
+      timeout: 30000
+    });
+    
+    const $ = cheerio.load(response.data);
+    const results = [];
+    const seen = new Set();
+    
+    $('.chivsrc li').each((i, el) => {
+      const $el = $(el);
+      const $title = $el.find('h2 a, a').first();
+      const title = $title.text().trim();
+      const href = $title.attr('href') || '';
+      const poster = $el.find('img').attr('src') || '';
+      
+      if (title && href && !seen.has(href)) {
+        seen.add(href);
+        const id = href.split('/').filter(p => p).pop() || '';
+        
+        if (id) {
+          results.push({
+            id,
+            title,
+            poster,
+            url: href.startsWith('http') ? href : `https://otakudesu.cloud${href}`,
+            source: 'otakudesu'
+          });
+        }
+      }
+    });
+    
+    res.json({
+      success: results.length > 0,
       query: q,
       count: results.length,
-      data: results 
+      data: results
     });
+
   } catch (error) {
     console.error('Error /otakudesu/search:', error.message);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: 'Failed to search',
       message: error.message
     });
