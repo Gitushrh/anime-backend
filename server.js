@@ -79,7 +79,8 @@ app.get('/otakudesu/schedule', async (req, res) => {
     
     const response = await axios.get('https://otakudesu.cloud/jadwal', {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://otakudesu.cloud/'
       },
       timeout: 30000
     });
@@ -87,27 +88,64 @@ app.get('/otakudesu/schedule', async (req, res) => {
     const $ = cheerio.load(response.data);
     const schedule = {};
     
-    // Parse schedule by day
-    $('.jadwalinfo').each((i, el) => {
-      const day = $(el).find('.jdlflm').text().trim();
+    // Parse each day section
+    // Look for day headers and their anime lists
+    const dayMap = {
+      'Senin': 'Monday',
+      'Selasa': 'Tuesday',
+      'Rabu': 'Wednesday',
+      'Kamis': 'Thursday',
+      'Jumat': 'Friday',
+      'Sabtu': 'Saturday',
+      'Minggu': 'Sunday'
+    };
+
+    // Try multiple selector patterns
+    $('[class*="jadwal"], [class*="schedule"]').each((i, el) => {
+      const $el = $(el);
+      
+      // Get day title
+      let dayTitle = $el.find('h2, h3, .day-title, [class*="day"]').text().trim();
+      if (!dayTitle) {
+        dayTitle = $el.find('strong').text().trim();
+      }
+      
+      const englishDay = dayMap[dayTitle] || dayTitle;
+      if (!englishDay) return;
+      
       const animes = [];
       
-      $(el).find('li').each((idx, liEl) => {
-        const title = $(liEl).find('a').text().trim();
-        const link = $(liEl).find('a').attr('href');
-        const id = link ? link.split('/').filter(p => p)[link.split('/').filter(p => p).length - 1] : '';
+      // Get anime list items
+      $el.find('li, [class*="anime"]').each((idx, liEl) => {
+        const $li = $(liEl);
+        const link = $li.find('a').first();
+        const title = link.text().trim();
+        const href = link.attr('href') || '';
+        const id = href.split('/').filter(p => p).pop() || '';
         
-        animes.push({
-          id,
-          title,
-          url: link || ''
-        });
+        if (title && id) {
+          animes.push({
+            id,
+            title,
+            url: `https://otakudesu.cloud${href}`
+          });
+        }
       });
       
-      if (day) {
-        schedule[day] = animes;
+      if (animes.length > 0) {
+        schedule[englishDay] = animes;
       }
     });
+
+    // Fallback: If no schedule found, return placeholder
+    if (Object.keys(schedule).length === 0) {
+      console.warn('No schedule data found, site structure may have changed');
+      return res.json({ 
+        success: false,
+        data: {},
+        message: 'Schedule parsing failed - site structure may have changed'
+      });
+    }
     
     res.json({ 
       success: true, 
@@ -118,10 +156,12 @@ app.get('/otakudesu/schedule', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch schedule',
-      message: error.message
+      message: error.message,
+      data: {}
     });
   }
 });
+
 
 // ============================================
 // SEMUA ANIME
@@ -185,7 +225,8 @@ app.get('/otakudesu/genres', async (req, res) => {
     
     const response = await axios.get('https://otakudesu.cloud/genres', {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://otakudesu.cloud/'
       },
       timeout: 30000
     });
@@ -193,23 +234,48 @@ app.get('/otakudesu/genres', async (req, res) => {
     const $ = cheerio.load(response.data);
     const genres = [];
     
-    $('a.genretag').each((i, el) => {
-      const $el = $(el);
-      const name = $el.text().trim();
-      const url = $el.attr('href');
-      const id = url ? url.split('/').filter(p => p)[url.split('/').filter(p => p).length - 1] : '';
+    // Try multiple selector patterns for genre links
+    const selectors = [
+      'a.genretag',
+      'a[href*="/genres/"]',
+      '[class*="genre"] a',
+      '.genre-list a',
+      'a[data-genre]'
+    ];
+    
+    let found = false;
+    
+    for (const selector of selectors) {
+      $(selector).each((i, el) => {
+        const $el = $(el);
+        const name = $el.text().trim();
+        const href = $el.attr('href') || '';
+        
+        // Extract genre ID from URL
+        const id = href.split('/').filter(p => p).pop() || '';
+        
+        if (name && id && id !== 'genres') {
+          // Avoid duplicates
+          if (!genres.some(g => g.id === id)) {
+            genres.push({
+              id,
+              name,
+              url: `https://otakudesu.cloud${href}`
+            });
+            found = true;
+          }
+        }
+      });
       
-      if (name) {
-        genres.push({
-          id,
-          name,
-          url
-        });
-      }
-    });
+      if (found) break;
+    }
+    
+    if (genres.length === 0) {
+      console.warn('No genres found, site structure may have changed');
+    }
     
     res.json({ 
-      success: true, 
+      success: genres.length > 0, 
       count: genres.length,
       data: genres 
     });
@@ -218,7 +284,8 @@ app.get('/otakudesu/genres', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch genres',
-      message: error.message
+      message: error.message,
+      data: []
     });
   }
 });
