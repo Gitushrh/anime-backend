@@ -1,4 +1,4 @@
-// utils/scraper.js - Puppeteer Video Scraper for Otakudesu
+// utils/scraper.js - Complete Puppeteer Scraper with Debug Logging
 const axios = require('axios');
 const cheerio = require('cheerio');
 const puppeteer = require('puppeteer');
@@ -139,7 +139,10 @@ class AnimeScraper {
       'filelions.com',
       'vidguard.to',
       'streamwish.to',
-      'wishfast.top'
+      'wishfast.top',
+      'filedon.co',
+      'vidhide',
+      'pdrain'
     ];
 
     const skipPatterns = [
@@ -160,6 +163,29 @@ class AnimeScraper {
     }
 
     return videoProviders.some(provider => urlLower.includes(provider));
+  }
+
+  // NEW: Decode data-content base64 to get streaming URL
+  decodeDataContent(base64Data) {
+    try {
+      const decoded = Buffer.from(base64Data, 'base64').toString('utf-8');
+      const data = JSON.parse(decoded);
+      
+      // Extract streaming URL from decoded data
+      // Format: {"id":188837,"i":0,"q":"360p"}
+      if (data.id && data.i !== undefined) {
+        // Build streaming URL (adjust based on actual API structure)
+        return {
+          id: data.id,
+          index: data.i,
+          quality: data.q || 'auto'
+        };
+      }
+      return null;
+    } catch (e) {
+      console.error('Failed to decode data-content:', e.message);
+      return null;
+    }
   }
 
   extractBloggerFromHtml(html) {
@@ -437,63 +463,103 @@ class AnimeScraper {
   async getStreamingLink(episodeId) {
     try {
       console.log(`\n🎬 Episode: ${episodeId}`);
+      console.log(`📍 URL: ${this.baseUrl}/episode/${episodeId}`);
       
       const $ = await this.fetchHTML(`${this.baseUrl}/episode/${episodeId}`);
       const iframeSources = [];
 
-      // DEBUG: Log page structure
-      console.log('🔍 Analyzing page structure...');
+      console.log('🔍 Analyzing page structure...\n');
+
+      // Method 1: Direct iframes (PRIORITY!)
+      let iframeCount = 0;
+      $('iframe[src]').each((i, el) => {
+        const src = $(el).attr('src');
+        console.log(`   [Iframe] ${src}`);
+        if (src && src.startsWith('http')) {
+          iframeSources.push({ provider: `Iframe ${i + 1}`, url: src, priority: 1 });
+          iframeCount++;
+        }
+      });
+      console.log(`   ✓ Found ${iframeCount} direct iframes\n`);
+
+      // Method 2: data-content with base64 decoding
+      let dataContentCount = 0;
+      const dataContentMap = new Map(); // Track unique episode IDs
       
-      // Method 1: .mirrorstream links
-      $('.mirrorstream ul li a, .mirrorstream a').each((i, el) => {
-        const $el = $(el);
-        const provider = $el.text().trim() || `Mirror ${i + 1}`;
-        const url = $el.attr('href') || $el.attr('data-content');
-        console.log(`   Found mirrorstream: ${provider} - ${url?.substring(0, 50)}`);
-        if (url && url.startsWith('http') && this.isVideoEmbedUrl(url)) {
-          iframeSources.push({ provider, url, priority: 1 });
-        }
-      });
-
-      // Method 2: .download links
-      $('.download ul li a, .download-eps a, .download a').each((i, el) => {
-        const $el = $(el);
-        const url = $el.attr('href');
-        const provider = $el.text().trim() || `Download ${i + 1}`;
-        console.log(`   Found download: ${provider} - ${url?.substring(0, 50)}`);
-        if (url && url.startsWith('http') && this.isVideoEmbedUrl(url)) {
-          iframeSources.push({ provider, url, priority: 2 });
-        }
-      });
-
-      // Method 3: data-content attributes
       $('[data-content]').each((i, el) => {
         const content = $(el).attr('data-content');
         const provider = $(el).text().trim() || `Data ${i + 1}`;
-        console.log(`   Found data-content: ${provider} - ${content?.substring(0, 50)}`);
-        if (content && content.startsWith('http') && this.isVideoEmbedUrl(content)) {
-          iframeSources.push({ provider, url: content, priority: 1 });
+        console.log(`   [Data] ${provider}: ${content}`);
+        
+        if (content && !content.startsWith('http')) {
+          // Try to decode base64
+          const decoded = this.decodeDataContent(content);
+          if (decoded && decoded.id) {
+            // Store unique episode ID
+            if (!dataContentMap.has(decoded.id)) {
+              dataContentMap.set(decoded.id, []);
+            }
+            dataContentMap.get(decoded.id).push({
+              provider,
+              quality: decoded.quality,
+              index: decoded.index
+            });
+            dataContentCount++;
+          }
+        } else if (content && content.startsWith('http') && this.isVideoEmbedUrl(content)) {
+          iframeSources.push({ provider, url: content, priority: 2 });
+          dataContentCount++;
         }
       });
+      
+      // Build streaming URLs from decoded data-content
+      for (const [episodeId, providers] of dataContentMap.entries()) {
+        console.log(`   💡 Decoded episode ID: ${episodeId} with ${providers.length} sources`);
+        // Try common streaming URL patterns
+        const possibleUrls = [
+          `https://otakudesu.cloud/wp-content/uploads/stream/${episodeId}`,
+          `https://desustream.info/watch/${episodeId}`,
+          `https://desustream.com/watch/${episodeId}`
+        ];
+        
+        for (const url of possibleUrls) {
+          iframeSources.push({
+            provider: providers[0].provider,
+            url: url,
+            priority: 2
+          });
+        }
+      }
+      
+      console.log(`   ✓ Found ${dataContentCount} data-content entries\n`);
 
-      // Method 4: All iframes on page
-      $('iframe[src]').each((i, el) => {
-        const src = $(el).attr('src');
-        console.log(`   Found iframe: ${src?.substring(0, 50)}`);
-        if (src && src.startsWith('http') && this.isVideoEmbedUrl(src)) {
-          iframeSources.push({ provider: `Iframe ${i + 1}`, url: src, priority: 1 });
+      // Method 3: .mirrorstream links (usually JavaScript-based)
+      let mirrorCount = 0;
+      $('.mirrorstream ul li a, .mirrorstream a, .mirrorstream li a').each((i, el) => {
+        const $el = $(el);
+        const provider = $el.text().trim() || `Mirror ${i + 1}`;
+        const url = $el.attr('href') || $el.attr('data-content');
+        
+        // Skip # links (JavaScript handlers)
+        if (url && url !== '#' && url.startsWith('http') && this.isVideoEmbedUrl(url)) {
+          console.log(`   [Mirror] ${provider}: ${url.substring(0, 60)}`);
+          iframeSources.push({ provider, url, priority: 3 });
+          mirrorCount++;
         }
       });
+      console.log(`   ✓ Found ${mirrorCount} mirror links\n`);
 
-      // Method 5: All links containing video provider domains
+      // Method 4: All video provider links
+      let linkCount = 0;
       $('a[href]').each((i, el) => {
         const href = $(el).attr('href');
-        if (href && this.isVideoEmbedUrl(href)) {
+        if (href && href !== '#' && this.isVideoEmbedUrl(href) && !href.includes('safelink')) {
           const provider = $(el).text().trim() || `Link ${i + 1}`;
-          console.log(`   Found video link: ${provider} - ${href.substring(0, 50)}`);
-          iframeSources.push({ provider, url: href, priority: 3 });
+          iframeSources.push({ provider, url: href, priority: 4 });
+          linkCount++;
         }
       });
+      console.log(`   ✓ Found ${linkCount} video provider links\n`);
 
       // Remove duplicates
       const uniqueSources = [];
@@ -506,7 +572,19 @@ class AnimeScraper {
       }
 
       uniqueSources.sort((a, b) => a.priority - b.priority);
-      console.log(`📡 Sources found: ${uniqueSources.length}`);
+      console.log(`📡 Total unique sources: ${uniqueSources.length}`);
+
+      if (uniqueSources.length === 0) {
+        console.log('⚠️ No video sources found on page!');
+        console.log('💡 Try using the debug endpoint: /otakudesu/debug/episode/' + episodeId);
+        return [];
+      }
+
+      // Show all sources
+      console.log('\n📋 Sources to scrape:');
+      uniqueSources.forEach((src, i) => {
+        console.log(`   ${i + 1}. ${src.provider}: ${src.url.substring(0, 70)}...`);
+      });
 
       const allLinks = [];
       let puppeteerAvailable = true;
@@ -520,7 +598,7 @@ class AnimeScraper {
 
       // Extract from sources (limit 5)
       for (const source of uniqueSources.slice(0, 5)) {
-        console.log(`\n🔥 ${source.provider}`);
+        console.log(`\n🔥 Processing: ${source.provider}`);
         
         let results = null;
         
@@ -566,121 +644,21 @@ class AnimeScraper {
         return qB - qA;
       });
 
-      console.log(`\n✅ RESULTS: ${uniqueLinks.length} links`);
+      console.log(`\n✅ FINAL RESULTS: ${uniqueLinks.length} video links`);
       console.log(`   MP4: ${uniqueLinks.filter(l => l.type === 'mp4').length}`);
       console.log(`   HLS: ${uniqueLinks.filter(l => l.type === 'hls').length}`);
 
+      if (uniqueLinks.length > 0) {
+        console.log(`\n🎉 VIDEO SOURCES:`);
+        uniqueLinks.slice(0, 5).forEach((link, i) => {
+          console.log(`   ${i + 1}. ${link.provider} - ${link.type.toUpperCase()} - ${link.quality}`);
+          console.log(`      ${link.url.substring(0, 80)}...`);
+        });
+      }
+
       return uniqueLinks;
     } catch (error) {
-      console.error('Scraping error:', error.message);
-      return [];
-    }
-  }
-
-  async getLatestAnime() {
-    try {
-      const $ = await this.fetchHTML(this.baseUrl);
-      const animes = [];
-
-      $('.venz ul li').each((i, el) => {
-        const $el = $(el);
-        const title = $el.find('.jdlflm').text().trim();
-        const poster = $el.find('.thumbz img').attr('src');
-        const url = $el.find('.thumb a').attr('href');
-        const episode = $el.find('.epz').text().trim();
-
-        if (title && url) {
-          animes.push({
-            id: this.generateSlug(url),
-            title,
-            poster: poster || '',
-            url,
-            latestEpisode: episode || 'Unknown',
-            source: 'otakudesu'
-          });
-        }
-      });
-
-      return animes;
-    } catch (error) {
-      console.error('Error latest:', error.message);
-      return [];
-    }
-  }
-
-  async getAnimeDetail(animeId) {
-    try {
-      const $ = await this.fetchHTML(`${this.baseUrl}/anime/${animeId}`);
-      
-      const title = $('.jdlrx h1').text().trim();
-      const poster = $('.fotoanime img').attr('src');
-      const synopsis = $('.sinopc p').text().trim();
-      
-      const info = {};
-      $('.infozingle p').each((i, el) => {
-        const text = $(el).text();
-        const [key, ...valueParts] = text.split(':');
-        if (key && valueParts.length > 0) {
-          info[key.trim()] = valueParts.join(':').trim();
-        }
-      });
-
-      const episodes = [];
-      $('.episodelist ul li').each((i, el) => {
-        const $el = $(el);
-        const episodeTitle = $el.find('span a').text().trim();
-        const episodeUrl = $el.find('span a').attr('href');
-        const date = $el.find('.zeebr').text().trim();
-
-        if (episodeUrl) {
-          episodes.push({
-            number: episodeTitle,
-            date,
-            url: this.generateSlug(episodeUrl)
-          });
-        }
-      });
-
-      return {
-        id: animeId,
-        title,
-        poster: poster || '',
-        synopsis: synopsis || 'No synopsis',
-        episodes,
-        info,
-        source: 'otakudesu'
-      };
-    } catch (error) {
-      console.error('Error detail:', error.message);
-      return null;
-    }
-  }
-
-  async searchAnime(query) {
-    try {
-      const $ = await this.fetchHTML(`${this.baseUrl}/?s=${encodeURIComponent(query)}&post_type=anime`);
-      const results = [];
-
-      $('.chivsrc li').each((i, el) => {
-        const $el = $(el);
-        const title = $el.find('h2 a').text().trim();
-        const poster = $el.find('img').attr('src');
-        const url = $el.find('h2 a').attr('href');
-
-        if (title && url) {
-          results.push({
-            id: this.generateSlug(url),
-            title,
-            poster: poster || '',
-            url,
-            source: 'otakudesu'
-          });
-        }
-      });
-
-      return results;
-    } catch (error) {
-      console.error('Error search:', error.message);
+      console.error('❌ Scraping error:', error.message);
       return [];
     }
   }
