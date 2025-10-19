@@ -175,13 +175,41 @@ app.get('/otakudesu/anime', async (req, res) => {
       let allAnime = response.data.data;
       
       // Check if data is object with anime array
-      if (!Array.isArray(allAnime) && allAnime.anime) {
-        allAnime = allAnime.anime;
+      if (!Array.isArray(allAnime)) {
+        console.log('📦 Data is object, extracting array...');
+        
+        // Try different possible keys
+        if (allAnime.anime && Array.isArray(allAnime.anime)) {
+          allAnime = allAnime.anime;
+          console.log(`✅ Extracted from 'anime' key: ${allAnime.length} items`);
+        } else if (allAnime.animeList && Array.isArray(allAnime.animeList)) {
+          allAnime = allAnime.animeList;
+          console.log(`✅ Extracted from 'animeList' key: ${allAnime.length} items`);
+        } else if (allAnime.unlimitedAnime && Array.isArray(allAnime.unlimitedAnime)) {
+          allAnime = allAnime.unlimitedAnime;
+          console.log(`✅ Extracted from 'unlimitedAnime' key: ${allAnime.length} items`);
+        } else {
+          // Try to extract values if it's an object
+          const values = Object.values(allAnime);
+          if (values.length > 0 && Array.isArray(values[0])) {
+            allAnime = values[0];
+            console.log(`✅ Extracted first array value: ${allAnime.length} items`);
+          } else {
+            console.error('❌ Could not find anime array in object');
+            return res.json({
+              success: true,
+              page: parseInt(page),
+              count: 0,
+              data: [],
+              source: 'sankavollerei'
+            });
+          }
+        }
       }
       
       // Ensure it's an array
       if (!Array.isArray(allAnime)) {
-        console.error('Data is not an array:', typeof allAnime);
+        console.error('❌ Data is not an array:', typeof allAnime);
         return res.json({
           success: true,
           page: parseInt(page),
@@ -458,10 +486,27 @@ app.get('/otakudesu/anime/:slug', async (req, res) => {
     });
     
     if (response.data && response.data.data) {
+      const animeData = response.data.data;
+      
+      // Sankavollerei API tidak mengembalikan episode_list di detail anime
+      // Episode list harus di-fetch dari halaman anime terpisah di client
+      // atau menggunakan endpoint khusus
+      
+      // Log untuk debugging
+      if (animeData.episode_list) {
+        console.log(`📺 Episode list found: ${animeData.episode_list.length} episodes`);
+      } else if (animeData.episodes) {
+        console.log(`📺 Episodes found: ${animeData.episodes.length} episodes`);
+      } else {
+        console.log('⚠️ No episode list in anime detail - this is normal for Sankavollerei API');
+        console.log('💡 Client should fetch episodes separately or use batch endpoint');
+      }
+      
       return res.json({
         success: true,
-        data: response.data.data,
-        source: 'sankavollerei'
+        data: animeData,
+        source: 'sankavollerei',
+        note: 'Episode list not included - fetch from batch or episode endpoints'
       });
     }
     
@@ -482,6 +527,40 @@ app.get('/otakudesu/anime/:slug', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch anime detail',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// ANIME BATCH - Get anime with episodes
+// ============================================
+app.get('/otakudesu/batch/:slug', async (req, res) => {
+  const { slug } = req.params;
+  
+  try {
+    console.log(`📦 Fetching batch: ${slug}`);
+    const response = await axios.get(`${sankaBaseUrl}/batch/${slug}`, { 
+      timeout: 20000 
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        data: response.data.data,
+        source: 'sankavollerei'
+      });
+    }
+    
+    return res.status(404).json({
+      success: false,
+      error: 'Batch not found'
+    });
+  } catch (error) {
+    console.error('❌ Error fetching batch:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch batch',
       message: error.message
     });
   }
