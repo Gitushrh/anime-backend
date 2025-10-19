@@ -1,7 +1,6 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-const AnimeScraper = require('./utils/scraper'); // Import scraper
 
 const app = express();
 const sankaBaseUrl = 'https://www.sankavollerei.com/anime';
