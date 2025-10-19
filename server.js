@@ -1,4 +1,4 @@
-// server.js - Production Ready with Graceful Shutdown
+// server.js - Production Ready dengan Full Routes
 const express = require('express');
 const cors = require('cors');
 const AnimeScraper = require('./utils/scraper');
@@ -7,7 +7,10 @@ const app = express();
 const scraper = new AnimeScraper();
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:3000', 'http://localhost:5000'],
+  credentials: true
+}));
 app.use(express.json());
 
 // Request logging with timing
@@ -20,33 +23,35 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health check
+// ============================================
+// MAIN ENDPOINT - API Documentation
+// ============================================
 app.get('/', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: 'Anime Scraper API - Hardcore Edition',
+    message: 'Otakudesu API - Hardcore Edition',
     version: '3.0.0',
     source: 'otakudesu.cloud',
-    features: [
-      'Puppeteer browser automation (with auto-fallback)',
-      'Aggressive axios extraction',
-      'Multi-layer video detection',
-      'Network request interception',
-      'Retry mechanism with exponential backoff'
-    ],
-    endpoints: {
-      latest: '/api/latest',
-      anime: '/api/anime/:slug',
-      episode: '/api/episode/:episodeId',
-      search: '/api/search?q=naruto',
-      debug_episode: '/api/debug/episode/:episodeId',
-      debug_iframe: '/api/debug/iframe?url=...'
+    routes: {
+      home: 'GET /otakudesu/home',
+      schedule: 'GET /otakudesu/schedule',
+      anime: 'GET /otakudesu/anime',
+      genres: 'GET /otakudesu/genres',
+      ongoing: 'GET /otakudesu/ongoing?page=1',
+      completed: 'GET /otakudesu/completed?page=1',
+      search: 'GET /otakudesu/search?q=naruto',
+      genreDetail: 'GET /otakudesu/genres/:genreId?page=1',
+      animeDetail: 'GET /otakudesu/anime/:animeId',
+      episode: 'GET /otakudesu/episode/:episodeId',
+      server: 'GET /otakudesu/server/:serverId'
     }
   });
 });
 
-// Get latest anime
-app.get('/api/latest', async (req, res) => {
+// ============================================
+// HALAMAN HOME
+// ============================================
+app.get('/otakudesu/home', async (req, res) => {
   try {
     const animes = await scraper.getLatestAnime();
     res.json({ 
@@ -55,83 +60,289 @@ app.get('/api/latest', async (req, res) => {
       data: animes 
     });
   } catch (error) {
-    console.error('Error /latest:', error.message);
+    console.error('Error /otakudesu/home:', error.message);
     res.status(500).json({ 
       success: false, 
-      error: 'Failed to fetch latest anime',
-      message: error.message,
-      data: []
+      error: 'Failed to fetch home',
+      message: error.message
     });
   }
 });
 
-// Get anime detail
-app.get('/api/anime/:id', async (req, res) => {
+// ============================================
+// JADWAL RILIS
+// ============================================
+app.get('/otakudesu/schedule', async (req, res) => {
   try {
-    const { id } = req.params;
-    const detail = await scraper.getAnimeDetail(id);
+    const axios = require('axios');
+    const cheerio = require('cheerio');
     
-    if (!detail) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Anime not found',
-        data: null 
+    const response = await axios.get('https://otakudesu.cloud/jadwal', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      timeout: 30000
+    });
+    
+    const $ = cheerio.load(response.data);
+    const schedule = {};
+    
+    // Parse schedule by day
+    $('.jadwalinfo').each((i, el) => {
+      const day = $(el).find('.jdlflm').text().trim();
+      const animes = [];
+      
+      $(el).find('li').each((idx, liEl) => {
+        const title = $(liEl).find('a').text().trim();
+        const link = $(liEl).find('a').attr('href');
+        const id = link ? link.split('/').filter(p => p)[link.split('/').filter(p => p).length - 1] : '';
+        
+        animes.push({
+          id,
+          title,
+          url: link || ''
+        });
       });
-    }
+      
+      if (day) {
+        schedule[day] = animes;
+      }
+    });
     
     res.json({ 
       success: true, 
-      data: detail 
+      data: schedule 
     });
   } catch (error) {
-    console.error('Error /anime/:id:', error.message);
+    console.error('Error /otakudesu/schedule:', error.message);
     res.status(500).json({ 
       success: false, 
-      error: 'Failed to fetch anime detail',
-      message: error.message,
-      data: null
+      error: 'Failed to fetch schedule',
+      message: error.message
     });
   }
 });
 
-// Get episode streaming links (MAIN ENDPOINT)
-app.get('/api/episode/:episodeId', async (req, res) => {
+// ============================================
+// SEMUA ANIME
+// ============================================
+app.get('/otakudesu/anime', async (req, res) => {
   try {
-    const { episodeId } = req.params;
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`📺 NEW REQUEST: ${episodeId}`);
-    console.log(`${'='.repeat(60)}`);
+    const axios = require('axios');
+    const cheerio = require('cheerio');
     
-    const links = await scraper.getStreamingLink(episodeId);
+    const response = await axios.get('https://otakudesu.cloud/anime', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      timeout: 30000
+    });
+    
+    const $ = cheerio.load(response.data);
+    const animes = [];
+    
+    $('.venz ul li').each((i, el) => {
+      const $el = $(el);
+      const title = $el.find('.jdlflm').text().trim();
+      const poster = $el.find('.thumbz img').attr('src');
+      const url = $el.find('.thumb a').attr('href');
+      const id = url ? url.split('/').filter(p => p)[url.split('/').filter(p => p).length - 1] : '';
+      const episode = $el.find('.epz').text().trim();
+      
+      if (title) {
+        animes.push({
+          id,
+          title,
+          poster: poster || '',
+          episode,
+          url
+        });
+      }
+    });
     
     res.json({ 
-      success: links.length > 0, 
-      count: links.length,
-      data: links,
-      message: links.length === 0 ? 'No playable sources found. Try different episode or check site structure.' : undefined
+      success: true, 
+      count: animes.length,
+      data: animes 
     });
   } catch (error) {
-    console.error('Error /episode/:episodeId:', error.message);
+    console.error('Error /otakudesu/anime:', error.message);
     res.status(500).json({ 
       success: false, 
-      error: 'Failed to fetch episode links',
-      message: error.message,
-      data: []
+      error: 'Failed to fetch anime list',
+      message: error.message
     });
   }
 });
 
-// Search anime
-app.get('/api/search', async (req, res) => {
+// ============================================
+// SEMUA GENRE
+// ============================================
+app.get('/otakudesu/genres', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const cheerio = require('cheerio');
+    
+    const response = await axios.get('https://otakudesu.cloud/genres', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      timeout: 30000
+    });
+    
+    const $ = cheerio.load(response.data);
+    const genres = [];
+    
+    $('a.genretag').each((i, el) => {
+      const $el = $(el);
+      const name = $el.text().trim();
+      const url = $el.attr('href');
+      const id = url ? url.split('/').filter(p => p)[url.split('/').filter(p => p).length - 1] : '';
+      
+      if (name) {
+        genres.push({
+          id,
+          name,
+          url
+        });
+      }
+    });
+    
+    res.json({ 
+      success: true, 
+      count: genres.length,
+      data: genres 
+    });
+  } catch (error) {
+    console.error('Error /otakudesu/genres:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch genres',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// ANIME SEDANG TAYANG (ONGOING)
+// ============================================
+app.get('/otakudesu/ongoing', async (req, res) => {
+  try {
+    const { page = 1 } = req.query;
+    const axios = require('axios');
+    const cheerio = require('cheerio');
+    
+    const response = await axios.get(`https://otakudesu.cloud/ongoing?page=${page}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      timeout: 30000
+    });
+    
+    const $ = cheerio.load(response.data);
+    const animes = [];
+    
+    $('.venz ul li').each((i, el) => {
+      const $el = $(el);
+      const title = $el.find('.jdlflm').text().trim();
+      const poster = $el.find('.thumbz img').attr('src');
+      const url = $el.find('.thumb a').attr('href');
+      const id = url ? url.split('/').filter(p => p)[url.split('/').filter(p => p).length - 1] : '';
+      const episode = $el.find('.epz').text().trim();
+      
+      if (title) {
+        animes.push({
+          id,
+          title,
+          poster: poster || '',
+          episode,
+          url
+        });
+      }
+    });
+    
+    res.json({ 
+      success: true, 
+      page: parseInt(page),
+      count: animes.length,
+      data: animes 
+    });
+  } catch (error) {
+    console.error('Error /otakudesu/ongoing:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch ongoing anime',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// ANIME SUDAH TAMAT (COMPLETED)
+// ============================================
+app.get('/otakudesu/completed', async (req, res) => {
+  try {
+    const { page = 1 } = req.query;
+    const axios = require('axios');
+    const cheerio = require('cheerio');
+    
+    const response = await axios.get(`https://otakudesu.cloud/completed?page=${page}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      timeout: 30000
+    });
+    
+    const $ = cheerio.load(response.data);
+    const animes = [];
+    
+    $('.venz ul li').each((i, el) => {
+      const $el = $(el);
+      const title = $el.find('.jdlflm').text().trim();
+      const poster = $el.find('.thumbz img').attr('src');
+      const url = $el.find('.thumb a').attr('href');
+      const id = url ? url.split('/').filter(p => p)[url.split('/').filter(p => p).length - 1] : '';
+      const episode = $el.find('.epz').text().trim();
+      
+      if (title) {
+        animes.push({
+          id,
+          title,
+          poster: poster || '',
+          episode,
+          url
+        });
+      }
+    });
+    
+    res.json({ 
+      success: true, 
+      page: parseInt(page),
+      count: animes.length,
+      data: animes 
+    });
+  } catch (error) {
+    console.error('Error /otakudesu/completed:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch completed anime',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// PENCARIAN ANIME
+// ============================================
+app.get('/otakudesu/search', async (req, res) => {
   try {
     const { q } = req.query;
     
     if (!q || q.trim().length === 0) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Search query (q) is required',
-        example: '/api/search?q=naruto',
-        data: []
+        error: 'Query parameter (q) is required',
+        example: '/otakudesu/search?q=naruto'
       });
     }
     
@@ -144,140 +355,156 @@ app.get('/api/search', async (req, res) => {
       data: results 
     });
   } catch (error) {
-    console.error('Error /search:', error.message);
+    console.error('Error /otakudesu/search:', error.message);
     res.status(500).json({ 
       success: false, 
-      error: 'Failed to search anime',
-      message: error.message,
-      data: []
+      error: 'Failed to search',
+      message: error.message
     });
   }
 });
 
-// DEBUG: Episode page structure
-app.get('/api/debug/episode/:episodeId', async (req, res) => {
+// ============================================
+// ANIME BERDASARKAN GENRE
+// ============================================
+app.get('/otakudesu/genres/:genreId', async (req, res) => {
   try {
-    const { episodeId } = req.params;
+    const { genreId } = req.params;
+    const { page = 1 } = req.query;
     const axios = require('axios');
     const cheerio = require('cheerio');
     
-    const url = `https://otakudesu.cloud/episode/${episodeId}`;
-    console.log(`🔍 DEBUG: ${url}`);
-    
-    const response = await axios.get(url, {
+    const response = await axios.get(`https://otakudesu.cloud/genres/${genreId}?page=${page}`, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
       timeout: 30000
     });
     
-    const html = response.data;
-    const $ = cheerio.load(html);
+    const $ = cheerio.load(response.data);
+    const animes = [];
     
-    const info = {
-      url,
-      title: $('title').text(),
-      mirrorstreamLinks: [],
-      downloadLinks: [],
-      allIframes: [],
-      dataContent: []
-    };
-    
-    $('.mirrorstream ul li a, .mirrorstream a').each((i, el) => {
+    $('.venz ul li').each((i, el) => {
       const $el = $(el);
-      info.mirrorstreamLinks.push({
-        text: $el.text().trim(),
-        href: $el.attr('href'),
-        dataContent: $el.attr('data-content')
-      });
-    });
-    
-    $('.download ul li a, .download-eps a').each((i, el) => {
-      const $el = $(el);
-      const href = $el.attr('href');
-      if (href && !href.includes('safelink')) {
-        info.downloadLinks.push({
-          text: $el.text().trim(),
-          href: href
+      const title = $el.find('.jdlflm').text().trim();
+      const poster = $el.find('.thumbz img').attr('src');
+      const url = $el.find('.thumb a').attr('href');
+      const id = url ? url.split('/').filter(p => p)[url.split('/').filter(p => p).length - 1] : '';
+      const episode = $el.find('.epz').text().trim();
+      
+      if (title) {
+        animes.push({
+          id,
+          title,
+          poster: poster || '',
+          episode,
+          url
         });
       }
     });
     
-    $('iframe[src]').each((i, el) => {
-      info.allIframes.push($(el).attr('src'));
-    });
-    
-    $('[data-content]').each((i, el) => {
-      const $el = $(el);
-      info.dataContent.push({
-        text: $el.text().trim(),
-        content: $el.attr('data-content')
-      });
-    });
-    
     res.json({ 
       success: true, 
-      data: {
-        info,
-        htmlSample: html.substring(0, 3000)
-      }
+      genre: genreId,
+      page: parseInt(page),
+      count: animes.length,
+      data: animes 
     });
   } catch (error) {
-    console.error('Error /debug/episode:', error.message);
+    console.error('Error /otakudesu/genres/:genreId:', error.message);
     res.status(500).json({ 
       success: false, 
-      error: 'Debug failed',
+      error: 'Failed to fetch genre anime',
       message: error.message
     });
   }
 });
 
-// DEBUG: Iframe inspection
-app.get('/api/debug/iframe', async (req, res) => {
+// ============================================
+// DETAIL LENGKAP ANIME
+// ============================================
+app.get('/otakudesu/anime/:animeId', async (req, res) => {
   try {
-    const { url } = req.query;
+    const { animeId } = req.params;
+    const detail = await scraper.getAnimeDetail(animeId);
     
-    if (!url) {
-      return res.status(400).json({ 
+    if (!detail) {
+      return res.status(404).json({ 
         success: false, 
-        error: 'URL parameter required',
-        example: '/api/debug/iframe?url=https://desustream.info/...'
+        error: 'Anime not found'
       });
     }
     
-    const axios = require('axios');
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://otakudesu.cloud/',
-        'Accept': '*/*'
-      },
-      timeout: 20000
-    });
-    
-    const html = response.data;
-    
     res.json({ 
       success: true, 
-      data: {
-        url,
-        htmlLength: html.length,
-        htmlSample: html.substring(0, 5000),
-        fullHtml: html
-      }
+      data: detail 
     });
   } catch (error) {
-    console.error('Error /debug/iframe:', error.message);
+    console.error('Error /otakudesu/anime/:animeId:', error.message);
     res.status(500).json({ 
       success: false, 
-      error: 'Debug failed',
+      error: 'Failed to fetch anime detail',
       message: error.message
     });
   }
 });
 
-// 404 handler
+// ============================================
+// NONTON ANIME BERDASARKAN EPISODE
+// ============================================
+app.get('/otakudesu/episode/:episodeId', async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`📺 NEW REQUEST: ${episodeId}`);
+    console.log(`${'='.repeat(60)}`);
+    
+    const links = await scraper.getStreamingLink(episodeId);
+    
+    res.json({ 
+      success: links.length > 0, 
+      count: links.length,
+      data: links
+    });
+  } catch (error) {
+    console.error('Error /otakudesu/episode/:episodeId:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch episode',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// LINK SERVER BUAT NONTON (ALIAS UNTUK EPISODE)
+// ============================================
+app.get('/otakudesu/server/:serverId', async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    console.log(`\n📡 Server Request: ${serverId}`);
+    
+    // Treat serverId as episodeId
+    const links = await scraper.getStreamingLink(serverId);
+    
+    res.json({ 
+      success: links.length > 0, 
+      count: links.length,
+      data: links
+    });
+  } catch (error) {
+    console.error('Error /otakudesu/server/:serverId:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch server',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// ERROR HANDLERS
+// ============================================
 app.use((req, res) => {
   res.status(404).json({ 
     success: false, 
@@ -286,7 +513,6 @@ app.use((req, res) => {
   });
 });
 
-// Error handling
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ 
@@ -300,28 +526,22 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║  🔥 ANIME SCRAPER API - HARDCORE EDITION v3.0             ║
+║  🍌 OTAKUDESU API - HARDCORE EDITION v3.0                 ║
 ╠════════════════════════════════════════════════════════════╣
 ║  📡 Port: ${PORT.toString().padEnd(48)} ║
 ║  🔗 Source: otakudesu.cloud                               ║
 ║  🎯 Mode: Puppeteer + Axios Fallback                      ║
 ╠════════════════════════════════════════════════════════════╣
-║  🚀 Features:                                             ║
-║     • Multi-layer video extraction                        ║
-║     • Network request interception                        ║
-║     • Aggressive regex patterns                           ║
-║     • Retry mechanism with backoff                        ║
-║     • Browser automation (if available)                   ║
-╠════════════════════════════════════════════════════════════╣
-║  📖 Documentation: http://localhost:${PORT}/                 ║
+║  🚀 Status: Ready (Non-Serverless Mode)                   ║
+║  ⚠️  Note: Use with non-serverless deployment             ║
 ╚════════════════════════════════════════════════════════════╝
   `);
-  console.log('✅ Server ready to scrape!\n');
+  console.log('✅ Server ready!\n');
 });
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
-  console.log('\n🛑 SIGTERM received, shutting down gracefully...');
+  console.log('\n🛑 SIGTERM received, shutting down...');
   await scraper.closeBrowser();
   server.close(() => {
     console.log('✅ Server closed');
@@ -330,7 +550,7 @@ process.on('SIGTERM', async () => {
 });
 
 process.on('SIGINT', async () => {
-  console.log('\n🛑 SIGINT received, shutting down gracefully...');
+  console.log('\n🛑 SIGINT received, shutting down...');
   await scraper.closeBrowser();
   server.close(() => {
     console.log('✅ Server closed');
@@ -338,11 +558,10 @@ process.on('SIGINT', async () => {
   });
 });
 
-// Handle uncaught errors
 process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught Exception:', error);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error('❌ Unhandled Rejection:', reason);
 });
