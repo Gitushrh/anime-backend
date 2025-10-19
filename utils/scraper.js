@@ -1,4 +1,4 @@
-// utils/scraper.js - IMPROVED: Skip Google Video, focus on playable sources
+// utils/scraper.js - FIXED: Resolve PHP endpoints and filter invalid videos
 const axios = require('axios');
 const cheerio = require('cheerio');
 const puppeteer = require('puppeteer');
@@ -94,12 +94,80 @@ class AnimeScraper {
     return cheerio.load(response.data);
   }
 
-  // 🔥 NEW: Check if URL is Google Video (to SKIP)
   isGoogleVideo(url) {
     const urlLower = url.toLowerCase();
     return urlLower.includes('googlevideo.com') || 
            urlLower.includes('blogger.com/video') ||
            (urlLower.includes('blogspot.com') && urlLower.includes('video'));
+  }
+
+  // 🔥 NEW: Check if URL is invalid (404, error pages, etc)
+  isInvalidVideo(url) {
+    const urlLower = url.toLowerCase();
+    const invalidPatterns = [
+      '404.jpg', '404.png', '404.mp4',
+      'error.jpg', 'error.png', 'error.mp4',
+      'notfound', 'unavailable',
+      'logo', 'icon', 'thumb', 'preview', 'banner',
+      '.js', '.css', '.html'
+    ];
+    
+    return invalidPatterns.some(pattern => urlLower.includes(pattern));
+  }
+
+  // 🔥 NEW: Check if URL is PHP endpoint that needs resolution
+  isPHPEndpoint(url) {
+    const urlLower = url.toLowerCase();
+    return urlLower.includes('index.php?id=') || 
+           urlLower.includes('/v5/index.php') ||
+           (urlLower.includes('.php') && urlLower.includes('?'));
+  }
+
+  // 🔥 NEW: Resolve PHP endpoint to get actual video URL
+  async resolvePHPEndpoint(phpUrl) {
+    try {
+      console.log(`🔍 Resolving PHP: ${phpUrl.substring(0, 60)}...`);
+      
+      const response = await this.fetchWithRetry(phpUrl, {
+        headers: {
+          'Referer': 'https://otakudesu.cloud/',
+          'Accept': '*/*'
+        },
+        maxRedirects: 5
+      }, 2);
+
+      const html = response.data;
+      
+      // Extract video URL from HTML/JS
+      const patterns = [
+        /file:\s*["']([^"']+\.mp4[^"']*)["']/i,
+        /source:\s*["']([^"']+\.mp4[^"']*)["']/i,
+        /"file":\s*"([^"]+\.mp4[^"]*)"/i,
+        /src=["']([^"']+\.mp4[^"']*)["']/i,
+        /https?:\/\/[^"'\s<>]+\.mp4(?:[?#][^"'\s<>]*)?/gi
+      ];
+
+      for (const pattern of patterns) {
+        const matches = [...html.matchAll(pattern)];
+        for (const match of matches) {
+          let videoUrl = match[1] || match[0];
+          videoUrl = videoUrl.replace(/\\u0026/g, '&').replace(/\\/g, '');
+          
+          if (this.isValidVideoUrl(videoUrl) && 
+              !this.isInvalidVideo(videoUrl) && 
+              !this.isGoogleVideo(videoUrl)) {
+            console.log(`✅ Resolved to: ${videoUrl.substring(0, 60)}...`);
+            return videoUrl;
+          }
+        }
+      }
+
+      console.log(`⚠️  Could not resolve PHP endpoint`);
+      return null;
+    } catch (error) {
+      console.log(`❌ PHP resolve error: ${error.message}`);
+      return null;
+    }
   }
 
   isVideoEmbedUrl(url) {
@@ -111,9 +179,8 @@ class AnimeScraper {
     const skipPatterns = ['safelink', 'otakufiles', 'gdrive', 'mega.nz'];
     const urlLower = url.toLowerCase();
     
-    // Skip Google Video
     if (this.isGoogleVideo(url)) {
-      console.log(`⏭️  SKIPPING Google Video: ${url.substring(0, 60)}...`);
+      console.log(`⏭️  SKIPPING Google Video`);
       return false;
     }
     
@@ -135,11 +202,9 @@ class AnimeScraper {
     }
   }
 
-  // 🔥 IMPROVED: Extract from Desustream and other playable sources
   extractPlayableVideo(html) {
     const videos = [];
     
-    // Desustream direct links
     const desustreamPatterns = [
       /https?:\/\/[^"'\s<>]*desustream[^"'\s<>]*\.mp4[^"'\s<>]*/gi,
       /https?:\/\/[^"'\s<>]*desustream[^"'\s<>]*\.m3u8[^"'\s<>]*/gi,
@@ -149,7 +214,9 @@ class AnimeScraper {
       const matches = [...html.matchAll(pattern)];
       for (const match of matches) {
         let videoUrl = match[0].replace(/\\u0026/g, '&').replace(/\\/g, '');
-        if (this.isValidVideoUrl(videoUrl) && !this.isGoogleVideo(videoUrl)) {
+        if (this.isValidVideoUrl(videoUrl) && 
+            !this.isGoogleVideo(videoUrl) && 
+            !this.isInvalidVideo(videoUrl)) {
           videos.push({ 
             url: videoUrl, 
             type: videoUrl.includes('.m3u8') ? 'hls' : 'mp4',
@@ -160,7 +227,6 @@ class AnimeScraper {
       }
     }
 
-    // Generic MP4/HLS (non-Google)
     const genericPatterns = [
       /https?:\/\/[^"'\s<>]+\.mp4(?:[?#][^"'\s<>]*)?/gi,
       /https?:\/\/[^"'\s<>]+\.m3u8(?:[?#][^"'\s<>]*)?/gi,
@@ -175,6 +241,7 @@ class AnimeScraper {
         
         if (this.isValidVideoUrl(videoUrl) && 
             !this.isGoogleVideo(videoUrl) && 
+            !this.isInvalidVideo(videoUrl) &&
             videoUrl.startsWith('http')) {
           videos.push({ 
             url: videoUrl, 
@@ -217,13 +284,50 @@ class AnimeScraper {
     const invalid = [
       'logo', 'icon', 'thumb', 'preview', 'banner', 'ad',
       '.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.webp',
-      'index.php', 'index.html', '404.jpg', '404.png',
       'player.php', 'embed.php', 'iframe.php'
     ];
     return !invalid.some(pattern => url.toLowerCase().includes(pattern));
   }
 
-  // 🔥 Puppeteer - Skip Google Video
+  // 🔥 IMPROVED: Process and validate video URLs
+  async processVideoUrl(url, provider) {
+    // Skip invalid videos immediately
+    if (this.isInvalidVideo(url)) {
+      console.log(`⏭️  SKIP invalid: ${url.substring(0, 50)}...`);
+      return null;
+    }
+
+    // Skip Google Video
+    if (this.isGoogleVideo(url)) {
+      console.log(`⏭️  SKIP Google: ${url.substring(0, 50)}...`);
+      return null;
+    }
+
+    // Resolve PHP endpoints
+    if (this.isPHPEndpoint(url)) {
+      const resolved = await this.resolvePHPEndpoint(url);
+      if (resolved) {
+        return {
+          url: resolved,
+          type: resolved.includes('.m3u8') ? 'hls' : 'mp4',
+          quality: this.extractQualityFromUrl(resolved),
+          source: 'php-resolved',
+          provider
+        };
+      }
+      return null;
+    }
+
+    // Direct video URL
+    return {
+      url,
+      type: url.includes('.m3u8') ? 'hls' : 'mp4',
+      quality: this.extractQualityFromUrl(url),
+      source: 'direct',
+      provider
+    };
+  }
+
   async extractWithPuppeteerFast(url, timeoutMs = 10000) {
     let page = null;
     try {
@@ -241,8 +345,8 @@ class AnimeScraper {
       page.on('request', (req) => {
         const reqUrl = req.url();
         
-        // Only capture non-Google video sources
         if (!this.isGoogleVideo(reqUrl) &&
+            !this.isInvalidVideo(reqUrl) &&
             (reqUrl.includes('desustream') ||
              reqUrl.endsWith('.mp4') || 
              reqUrl.endsWith('.m3u8'))) {
@@ -260,26 +364,32 @@ class AnimeScraper {
       await this.delay(2000);
 
       if (videoUrls.length > 0) {
-        const results = videoUrls
-          .filter(vUrl => !this.isGoogleVideo(vUrl))
-          .map(vUrl => ({
-            url: vUrl,
-            type: vUrl.includes('.m3u8') ? 'hls' : 'mp4',
-            quality: this.extractQualityFromUrl(vUrl),
-            source: 'puppeteer'
-          }));
+        // Process all captured URLs
+        const processed = await Promise.all(
+          videoUrls.map(vUrl => this.processVideoUrl(vUrl, 'puppeteer'))
+        );
+        
+        const results = processed.filter(r => r !== null);
         
         if (results.length > 0) {
-          console.log(`✅ Found ${results.length} playable videos`);
+          console.log(`✅ Found ${results.length} valid videos`);
           return results;
         }
       }
 
       const html = await page.content();
       const playableVideos = this.extractPlayableVideo(html);
+      
       if (playableVideos && playableVideos.length > 0) {
-        console.log(`✅ Playable videos: ${playableVideos.length}`);
-        return playableVideos;
+        const processed = await Promise.all(
+          playableVideos.map(v => this.processVideoUrl(v.url, 'puppeteer'))
+        );
+        const results = processed.filter(r => r !== null);
+        
+        if (results.length > 0) {
+          console.log(`✅ Extracted ${results.length} videos from HTML`);
+          return results;
+        }
       }
 
       return null;
@@ -296,7 +406,6 @@ class AnimeScraper {
     }
   }
 
-  // 🔥 Axios - Skip Google Video
   async extractWithAxiosFast(url, depth = 0) {
     try {
       if (depth > 2) return null;
@@ -315,23 +424,28 @@ class AnimeScraper {
       const html = response.data;
       const $ = cheerio.load(html);
 
-      // Extract playable videos (skip Google)
       const playableVideos = this.extractPlayableVideo(html);
+      
       if (playableVideos && playableVideos.length > 0) {
-        console.log(`✅ Found ${playableVideos.length} playable videos`);
-        return playableVideos;
+        const processed = await Promise.all(
+          playableVideos.map(v => this.processVideoUrl(v.url, 'axios'))
+        );
+        const results = processed.filter(r => r !== null);
+        
+        if (results.length > 0) {
+          console.log(`✅ Found ${results.length} valid videos`);
+          return results;
+        }
       }
 
-      // Check iframes (skip Google Video iframes)
       const iframes = [];
       $('iframe[src]').each((i, el) => {
         const src = $(el).attr('src');
-        if (src && !this.isGoogleVideo(src) && this.isVideoEmbedUrl(src)) {
+        if (src && !this.isGoogleVideo(src) && !this.isInvalidVideo(src) && this.isVideoEmbedUrl(src)) {
           iframes.push(src.replace(/&amp;/g, '&'));
         }
       });
 
-      // Try nested iframes
       if (depth < 2) {
         for (const iframeUrl of iframes.slice(0, 2)) {
           const result = await this.extractWithAxiosFast(iframeUrl, depth + 1);
@@ -346,15 +460,15 @@ class AnimeScraper {
     }
   }
 
-  // 🚀 Parallel extraction
   async extractParallel(sources, maxConcurrent = 2) {
     const results = [];
     
-    // Filter out Google Video sources
-    const filteredSources = sources.filter(s => !this.isGoogleVideo(s.url));
+    const filteredSources = sources.filter(s => 
+      !this.isGoogleVideo(s.url) && !this.isInvalidVideo(s.url)
+    );
     
     if (filteredSources.length === 0) {
-      console.log('⚠️  All sources are Google Video - SKIPPED');
+      console.log('⚠️  All sources filtered out');
       return [];
     }
     
@@ -363,10 +477,8 @@ class AnimeScraper {
       
       const promises = batch.map(async (source) => {
         try {
-          // Try Axios first
           let result = await this.extractWithAxiosFast(source.url);
           
-          // If Axios fails, try Puppeteer
           if (!result || result.length === 0) {
             result = await this.extractWithPuppeteerFast(source.url, 10000);
           }
@@ -390,7 +502,7 @@ class AnimeScraper {
           results.push(...res.value);
           
           if (results.length > 0) {
-            console.log(`✅ Found playable videos! Stopping.`);
+            console.log(`✅ Found valid videos! Stopping.`);
             return results;
           }
         }
@@ -410,15 +522,13 @@ class AnimeScraper {
 
       console.log('🔍 Analyzing...\n');
 
-      // Direct iframes (SKIP Google Video)
       $('iframe[src]').each((i, el) => {
         const src = $(el).attr('src');
-        if (src && src.startsWith('http') && !this.isGoogleVideo(src)) {
+        if (src && src.startsWith('http') && !this.isGoogleVideo(src) && !this.isInvalidVideo(src)) {
           iframeSources.push({ provider: `Iframe ${i + 1}`, url: src, priority: 1 });
         }
       });
 
-      // data-content decoding
       const dataContentMap = new Map();
       
       $('[data-content]').each((i, el) => {
@@ -442,7 +552,6 @@ class AnimeScraper {
         }
       });
       
-      // Build streaming URLs (Desustream priority)
       for (const [episodeId, providers] of dataContentMap.entries()) {
         const possibleUrls = [
           `https://desustream.info/watch/${episodeId}`,
@@ -459,35 +568,36 @@ class AnimeScraper {
         }
       }
 
-      // Remove duplicates
       const uniqueSources = [];
       const seenUrls = new Set();
       for (const source of iframeSources) {
-        if (!seenUrls.has(source.url) && !this.isGoogleVideo(source.url)) {
+        if (!seenUrls.has(source.url) && 
+            !this.isGoogleVideo(source.url) && 
+            !this.isInvalidVideo(source.url)) {
           seenUrls.add(source.url);
           uniqueSources.push(source);
         }
       }
 
       uniqueSources.sort((a, b) => a.priority - b.priority);
-      console.log(`📡 Found ${uniqueSources.length} playable sources (Google Video filtered)\n`);
+      console.log(`📡 Found ${uniqueSources.length} sources (filtered)\n`);
 
       if (uniqueSources.length === 0) {
-        console.log('⚠️  No playable sources found (all were Google Video)');
+        console.log('⚠️  No valid sources found');
         return [];
       }
 
-      // Process up to 4 sources for better chance
       const topSources = uniqueSources.slice(0, 4);
-      console.log(`⚡ Processing ${topSources.length} sources in parallel...\n`);
+      console.log(`⚡ Processing ${topSources.length} sources...\n`);
       
       const allLinks = await this.extractParallel(topSources, 2);
 
-      // Remove duplicates and filter Google Video
       const uniqueLinks = [];
       const seenVideoUrls = new Set();
       for (const link of allLinks) {
-        if (!seenVideoUrls.has(link.url) && !this.isGoogleVideo(link.url)) {
+        if (!seenVideoUrls.has(link.url) && 
+            !this.isGoogleVideo(link.url) && 
+            !this.isInvalidVideo(link.url)) {
           seenVideoUrls.add(link.url);
           uniqueLinks.push(link);
         }
@@ -499,7 +609,7 @@ class AnimeScraper {
         return qB - qA;
       });
 
-      console.log(`\n✅ RESULT: ${uniqueLinks.length} playable video links`);
+      console.log(`\n✅ RESULT: ${uniqueLinks.length} valid video links`);
       console.log(`   MP4: ${uniqueLinks.filter(l => l.type === 'mp4').length}`);
       console.log(`   HLS: ${uniqueLinks.filter(l => l.type === 'hls').length}`);
 
@@ -507,9 +617,8 @@ class AnimeScraper {
         console.log(`\n🎉 VIDEO SOURCES:`);
         uniqueLinks.slice(0, 3).forEach((link, i) => {
           console.log(`   ${i + 1}. ${link.provider} - ${link.type.toUpperCase()} - ${link.quality}`);
+          console.log(`      ${link.url.substring(0, 80)}...`);
         });
-      } else {
-        console.log(`\n⚠️  All extracted videos were Google Video (not playable)`);
       }
 
       return uniqueLinks;
