@@ -31,12 +31,13 @@ app.get('/', (req, res) => {
   res.json({
     status: 'OK',
     message: 'Anime Streaming API',
-    version: '3.1.0',
+    version: '3.2.0',
     mode: 'Wajik Primary + Otakudesu Fallback',
     routes: {
       home: 'GET /otakudesu/home',
       schedule: 'GET /otakudesu/schedule',
       anime: 'GET /otakudesu/anime',
+      animeWithSearch: 'GET /otakudesu/anime?q=naruto&page=1',
       genres: 'GET /otakudesu/genres',
       ongoing: 'GET /otakudesu/ongoing?page=1',
       completed: 'GET /otakudesu/completed?page=1',
@@ -130,15 +131,29 @@ app.get('/otakudesu/home', async (req, res) => {
   }
 });
 
-// Schedule
+// Schedule - dengan mapping hari ke Indonesian
 app.get('/otakudesu/schedule', async (req, res) => {
   try {
     const response = await axios.get(`${wajikBaseUrl}/schedule`, { timeout: 20000 });
     if (response.data && response.data.ok && response.data.data?.days) {
       const schedule = {};
+      
+      // Map English days to Indonesian
+      const dayMap = {
+        'Monday': 'Senin',
+        'Tuesday': 'Selasa', 
+        'Wednesday': 'Rabu',
+        'Thursday': 'Kamis',
+        'Friday': 'Jumat',
+        'Saturday': 'Sabtu',
+        'Sunday': 'Minggu'
+      };
+      
       response.data.data.days.forEach(day => {
-        schedule[day.day] = day.animeList || [];
+        const dayName = dayMap[day.day] || day.day;
+        schedule[dayName] = day.animeList || [];
       });
+      
       return res.json({
         success: true,
         data: schedule,
@@ -201,13 +216,65 @@ app.get('/otakudesu/schedule', async (req, res) => {
   }
 });
 
-// All Anime
+// All Anime - dengan support search dan pagination
 app.get('/otakudesu/anime', async (req, res) => {
+  const { q, page = 1 } = req.query;
+  
+  // Jika ada query search, redirect ke search endpoint
+  if (q && q.trim().length > 0) {
+    try {
+      console.log(`🔍 Search anime: ${q} (page: ${page})`);
+      const response = await axios.get(`${wajikBaseUrl}/search/${encodeURIComponent(q)}`, { 
+        timeout: 20000,
+        params: { page }
+      });
+      
+      if (response.data && response.data.ok && response.data.data?.animeList) {
+        return res.json({
+          success: true,
+          query: q,
+          page: parseInt(page),
+          count: response.data.data.animeList.length,
+          data: response.data.data.animeList,
+          source: 'wajik-api'
+        });
+      }
+    } catch (error) {
+      console.log(`⚠️ Wajik /search failed, trying scraper...`);
+    }
+
+    // Fallback ke scraper untuk search
+    try {
+      const results = await scraper.searchAnime(q);
+      return res.json({
+        success: true,
+        query: q,
+        page: parseInt(page),
+        count: results.length,
+        data: results,
+        source: 'otakudesu-scrape'
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to search',
+        message: error.message
+      });
+    }
+  }
+  
+  // Jika tidak ada query, ambil semua anime dengan pagination
   try {
-    const response = await axios.get(`${wajikBaseUrl}/anime`, { timeout: 20000 });
+    console.log(`📚 Fetching all anime (page: ${page})`);
+    const response = await axios.get(`${wajikBaseUrl}/anime`, { 
+      timeout: 20000,
+      params: { page }
+    });
+    
     if (response.data && response.data.ok && response.data.data?.animeList) {
       return res.json({
         success: true,
+        page: parseInt(page),
         count: response.data.data.animeList.length,
         data: response.data.data.animeList,
         source: 'wajik-api'
@@ -217,6 +284,7 @@ app.get('/otakudesu/anime', async (req, res) => {
     console.log(`⚠️ Wajik /anime failed, trying scraper...`);
   }
 
+  // Fallback ke scraper
   try {
     const cheerio = require('cheerio');
     const response = await axios.get('https://otakudesu.cloud/anime', {
@@ -234,18 +302,29 @@ app.get('/otakudesu/anime', async (req, res) => {
       const id = url ? url.split('/').filter(p => p).pop() : '';
 
       if (title && id) {
-        animes.push({ id, title, poster: poster || '', url, episode: $el.find('.epz').text().trim() });
+        animes.push({ 
+          id, 
+          title, 
+          poster: poster || '', 
+          url, 
+          episode: $el.find('.epz').text().trim() 
+        });
       }
     });
 
     return res.json({
       success: true,
+      page: parseInt(page),
       count: animes.length,
       data: animes,
       source: 'otakudesu-scrape'
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to fetch anime list', message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch anime list', 
+      message: error.message 
+    });
   }
 });
 
@@ -500,14 +579,14 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║  🍌 ANIME STREAMING API v3.1.0                            ║
+║  🍌 ANIME STREAMING API v3.2.0                            ║
 ╠════════════════════════════════════════════════════════════╣
 ║  📡 Port: ${PORT.toString().padEnd(48)} ║
 ║  🔗 Primary: Wajik API (Vercel)                           ║
 ║  🔄 Fallback: Otakudesu Direct Scrape                     ║
 ╠════════════════════════════════════════════════════════════╣
 ║  🚀 Status: Ready (Production Mode)                       ║
-║  📊 Mode: Hybrid Proxy                                     ║
+║  📊 Mode: Hybrid Proxy + Search Support                   ║
 ╚════════════════════════════════════════════════════════════╝
   `);
 });
