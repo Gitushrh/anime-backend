@@ -441,30 +441,57 @@ class AnimeScraper {
       const $ = await this.fetchHTML(`${this.baseUrl}/episode/${episodeId}`);
       const iframeSources = [];
 
-      // Collect iframe sources
+      // DEBUG: Log page structure
+      console.log('🔍 Analyzing page structure...');
+      
+      // Method 1: .mirrorstream links
       $('.mirrorstream ul li a, .mirrorstream a').each((i, el) => {
         const $el = $(el);
         const provider = $el.text().trim() || `Mirror ${i + 1}`;
         const url = $el.attr('href') || $el.attr('data-content');
+        console.log(`   Found mirrorstream: ${provider} - ${url?.substring(0, 50)}`);
         if (url && url.startsWith('http') && this.isVideoEmbedUrl(url)) {
           iframeSources.push({ provider, url, priority: 1 });
         }
       });
 
-      $('.download ul li a').each((i, el) => {
+      // Method 2: .download links
+      $('.download ul li a, .download-eps a, .download a').each((i, el) => {
         const $el = $(el);
         const url = $el.attr('href');
+        const provider = $el.text().trim() || `Download ${i + 1}`;
+        console.log(`   Found download: ${provider} - ${url?.substring(0, 50)}`);
         if (url && url.startsWith('http') && this.isVideoEmbedUrl(url)) {
-          const provider = $el.text().trim() || `Download ${i + 1}`;
           iframeSources.push({ provider, url, priority: 2 });
         }
       });
 
+      // Method 3: data-content attributes
       $('[data-content]').each((i, el) => {
         const content = $(el).attr('data-content');
         const provider = $(el).text().trim() || `Data ${i + 1}`;
+        console.log(`   Found data-content: ${provider} - ${content?.substring(0, 50)}`);
         if (content && content.startsWith('http') && this.isVideoEmbedUrl(content)) {
           iframeSources.push({ provider, url: content, priority: 1 });
+        }
+      });
+
+      // Method 4: All iframes on page
+      $('iframe[src]').each((i, el) => {
+        const src = $(el).attr('src');
+        console.log(`   Found iframe: ${src?.substring(0, 50)}`);
+        if (src && src.startsWith('http') && this.isVideoEmbedUrl(src)) {
+          iframeSources.push({ provider: `Iframe ${i + 1}`, url: src, priority: 1 });
+        }
+      });
+
+      // Method 5: All links containing video provider domains
+      $('a[href]').each((i, el) => {
+        const href = $(el).attr('href');
+        if (href && this.isVideoEmbedUrl(href)) {
+          const provider = $(el).text().trim() || `Link ${i + 1}`;
+          console.log(`   Found video link: ${provider} - ${href.substring(0, 50)}`);
+          iframeSources.push({ provider, url: href, priority: 3 });
         }
       });
 

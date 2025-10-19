@@ -552,6 +552,116 @@ app.get('/otakudesu/search', async (req, res) => {
 });
 
 // ============================================
+// 🔧 DEBUG ENDPOINT - Episode Page Analysis
+// ============================================
+app.get('/otakudesu/debug/episode/:slug', async (req, res) => {
+  const { slug } = req.params;
+  
+  try {
+    console.log(`🔍 DEBUG: Analyzing episode page structure for ${slug}`);
+    const cheerio = require('cheerio');
+    const response = await axios.get(`https://otakudesu.cloud/episode/${slug}`, {
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const html = response.data;
+    const $ = cheerio.load(html);
+    
+    const debug = {
+      url: `https://otakudesu.cloud/episode/${slug}`,
+      title: $('title').text(),
+      
+      // Find all potential video containers
+      mirrorstream: [],
+      download: [],
+      iframes: [],
+      dataContent: [],
+      allLinks: []
+    };
+    
+    // Check .mirrorstream
+    $('.mirrorstream').each((i, el) => {
+      debug.mirrorstream.push({
+        html: $(el).html()?.substring(0, 500),
+        links: []
+      });
+      $(el).find('a').each((j, link) => {
+        debug.mirrorstream[i].links.push({
+          text: $(link).text().trim(),
+          href: $(link).attr('href'),
+          dataContent: $(link).attr('data-content')
+        });
+      });
+    });
+    
+    // Check .download
+    $('.download').each((i, el) => {
+      debug.download.push({
+        html: $(el).html()?.substring(0, 500),
+        links: []
+      });
+      $(el).find('a').each((j, link) => {
+        debug.download[i].links.push({
+          text: $(link).text().trim(),
+          href: $(link).attr('href')
+        });
+      });
+    });
+    
+    // Check all iframes
+    $('iframe[src]').each((i, el) => {
+      debug.iframes.push({
+        src: $(el).attr('src'),
+        id: $(el).attr('id'),
+        class: $(el).attr('class')
+      });
+    });
+    
+    // Check data-content
+    $('[data-content]').each((i, el) => {
+      debug.dataContent.push({
+        text: $(el).text().trim(),
+        content: $(el).attr('data-content'),
+        tag: el.tagName
+      });
+    });
+    
+    // All links with video providers
+    $('a[href]').each((i, el) => {
+      const href = $(el).attr('href') || '';
+      if (href.includes('desustream') || 
+          href.includes('blogger') || 
+          href.includes('blogspot') ||
+          href.includes('mp4upload') ||
+          href.includes('streamtape')) {
+        debug.allLinks.push({
+          text: $(el).text().trim(),
+          href: href.substring(0, 200),
+          parent: $(el).parent().attr('class')
+        });
+      }
+    });
+    
+    res.json({
+      success: true,
+      data: debug,
+      htmlSample: html.substring(0, 5000)
+    });
+    
+  } catch (error) {
+    console.error('❌ Debug error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to analyze page',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
 // ERROR HANDLING
 // ============================================
 app.use((req, res) => {
