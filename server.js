@@ -1,9 +1,11 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
+const AnimeScraper = require('./utils/scraper'); // Import your scraper
 
 const app = express();
 const sankaBaseUrl = 'https://www.sankavollerei.com/anime';
+const scraper = new AnimeScraper(); // Initialize scraper ONCE
 
 // Middleware
 app.use(cors({
@@ -28,9 +30,14 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'OK',
-    message: 'Sukinime API - Sankavollerei Backend',
-    version: '5.0.0',
-    apiSource: 'Sankavollerei API',
+    message: 'Sukinime API v6.0 - Sankavollerei + Puppeteer Scraper',
+    version: '6.0.0',
+    features: [
+      'Sankavollerei API for metadata',
+      'Puppeteer scraping for streaming links',
+      'Direct MP4/HLS extraction',
+      'Axios fallback when Puppeteer unavailable'
+    ],
     routes: {
       home: 'GET /otakudesu/home',
       schedule: 'GET /otakudesu/schedule',
@@ -40,26 +47,23 @@ app.get('/', (req, res) => {
       genres: 'GET /otakudesu/genres',
       genreDetail: 'GET /otakudesu/genres/:slug?page=1',
       animeDetail: 'GET /otakudesu/anime/:slug',
-      episode: 'GET /otakudesu/episode/:slug',
-      search: 'GET /otakudesu/search?q=naruto',
-      server: 'GET /otakudesu/server/:serverId'
+      episode: 'GET /otakudesu/episode/:slug (WITH PUPPETEER SCRAPING)',
+      search: 'GET /otakudesu/search?q=naruto'
     }
   });
 });
 
 // ============================================
-// HOME - Data dari halaman utama
+// HOME
 // ============================================
 app.get('/otakudesu/home', async (req, res) => {
   try {
-    console.log('📡 Fetching home...');
     const response = await axios.get(`${sankaBaseUrl}/home`, { timeout: 20000 });
     
     if (response.data && response.data.data) {
       const data = response.data.data;
       const homeList = [];
       
-      // Gabungkan semua section (ongoing, complete)
       if (data.ongoing) homeList.push(...data.ongoing);
       if (data.complete) homeList.push(...data.complete);
       
@@ -88,25 +92,19 @@ app.get('/otakudesu/home', async (req, res) => {
 });
 
 // ============================================
-// SCHEDULE - Jadwal rilis per hari
+// SCHEDULE
 // ============================================
 app.get('/otakudesu/schedule', async (req, res) => {
   try {
-    console.log('📅 Fetching schedule...');
     const response = await axios.get(`${sankaBaseUrl}/schedule`, { timeout: 20000 });
     
     if (response.data && response.data.data) {
       const rawData = response.data.data;
-      
-      // Transform schedule format
       const schedule = {};
       
-      // rawData is an object with numeric keys (0, 1, 2, etc)
       Object.values(rawData).forEach(dayData => {
         if (dayData && dayData.day && dayData.anime_list) {
-          const dayName = dayData.day; // Already in Indonesian (Senin, Selasa, etc)
-          
-          // Transform anime list
+          const dayName = dayData.day;
           schedule[dayName] = dayData.anime_list.map(anime => ({
             id: anime.slug,
             title: anime.anime_name || anime.title,
@@ -140,15 +138,13 @@ app.get('/otakudesu/schedule', async (req, res) => {
 });
 
 // ============================================
-// ALL ANIME - Unlimited dengan search
+// ALL ANIME
 // ============================================
 app.get('/otakudesu/anime', async (req, res) => {
   const { q, page = 1 } = req.query;
   
   try {
-    // Jika ada query search
     if (q && q.trim().length > 0) {
-      console.log(`🔍 Searching: ${q}`);
       const response = await axios.get(`${sankaBaseUrl}/search/${encodeURIComponent(q)}`, { 
         timeout: 20000 
       });
@@ -165,8 +161,6 @@ app.get('/otakudesu/anime', async (req, res) => {
       }
     }
     
-    // Jika tidak ada query, ambil semua anime (unlimited)
-    console.log(`📚 Fetching all anime (page: ${page})`);
     const response = await axios.get(`${sankaBaseUrl}/unlimited`, { 
       timeout: 30000 
     });
@@ -174,28 +168,16 @@ app.get('/otakudesu/anime', async (req, res) => {
     if (response.data && response.data.data) {
       let allAnime = response.data.data;
       
-      // Check if data is object with anime array
       if (!Array.isArray(allAnime)) {
-        console.log('📦 Data is object, extracting array...');
-        
-        // Try different possible keys
         if (allAnime.anime && Array.isArray(allAnime.anime)) {
           allAnime = allAnime.anime;
-          console.log(`✅ Extracted from 'anime' key: ${allAnime.length} items`);
         } else if (allAnime.animeList && Array.isArray(allAnime.animeList)) {
           allAnime = allAnime.animeList;
-          console.log(`✅ Extracted from 'animeList' key: ${allAnime.length} items`);
-        } else if (allAnime.unlimitedAnime && Array.isArray(allAnime.unlimitedAnime)) {
-          allAnime = allAnime.unlimitedAnime;
-          console.log(`✅ Extracted from 'unlimitedAnime' key: ${allAnime.length} items`);
         } else {
-          // Try to extract values if it's an object
           const values = Object.values(allAnime);
           if (values.length > 0 && Array.isArray(values[0])) {
             allAnime = values[0];
-            console.log(`✅ Extracted first array value: ${allAnime.length} items`);
           } else {
-            console.error('❌ Could not find anime array in object');
             return res.json({
               success: true,
               page: parseInt(page),
@@ -207,19 +189,6 @@ app.get('/otakudesu/anime', async (req, res) => {
         }
       }
       
-      // Ensure it's an array
-      if (!Array.isArray(allAnime)) {
-        console.error('❌ Data is not an array:', typeof allAnime);
-        return res.json({
-          success: true,
-          page: parseInt(page),
-          count: 0,
-          data: [],
-          source: 'sankavollerei'
-        });
-      }
-      
-      // Pagination manual (20 items per page)
       const itemsPerPage = 20;
       const startIndex = (parseInt(page) - 1) * itemsPerPage;
       const endIndex = startIndex + itemsPerPage;
@@ -260,7 +229,6 @@ app.get('/otakudesu/ongoing', async (req, res) => {
   const { page = 1 } = req.query;
   
   try {
-    console.log(`📡 Fetching ongoing (page: ${page})`);
     const response = await axios.get(`${sankaBaseUrl}/ongoing-anime`, {
       params: { page },
       timeout: 20000
@@ -269,28 +237,15 @@ app.get('/otakudesu/ongoing', async (req, res) => {
     if (response.data && response.data.data) {
       let animeData = response.data.data;
       
-      // Check if data contains ongoingAnimeData
       if (animeData.ongoingAnimeData && Array.isArray(animeData.ongoingAnimeData)) {
         animeData = animeData.ongoingAnimeData;
-      }
-      
-      // Ensure it's an array
-      if (!Array.isArray(animeData)) {
-        console.error('Ongoing data is not an array');
-        return res.json({
-          success: true,
-          page: parseInt(page),
-          count: 0,
-          data: [],
-          source: 'sankavollerei'
-        });
       }
       
       return res.json({
         success: true,
         page: parseInt(page),
-        count: animeData.length,
-        data: animeData,
+        count: Array.isArray(animeData) ? animeData.length : 0,
+        data: Array.isArray(animeData) ? animeData : [],
         source: 'sankavollerei'
       });
     }
@@ -319,7 +274,6 @@ app.get('/otakudesu/completed', async (req, res) => {
   const { page = 1 } = req.query;
   
   try {
-    console.log(`📡 Fetching completed (page: ${page})`);
     const response = await axios.get(`${sankaBaseUrl}/complete-anime/${page}`, {
       timeout: 20000
     });
@@ -327,28 +281,15 @@ app.get('/otakudesu/completed', async (req, res) => {
     if (response.data && response.data.data) {
       let animeData = response.data.data;
       
-      // Check if data contains completeAnimeData
       if (animeData.completeAnimeData && Array.isArray(animeData.completeAnimeData)) {
         animeData = animeData.completeAnimeData;
-      }
-      
-      // Ensure it's an array
-      if (!Array.isArray(animeData)) {
-        console.error('Completed data is not an array');
-        return res.json({
-          success: true,
-          page: parseInt(page),
-          count: 0,
-          data: [],
-          source: 'sankavollerei'
-        });
       }
       
       return res.json({
         success: true,
         page: parseInt(page),
-        count: animeData.length,
-        data: animeData,
+        count: Array.isArray(animeData) ? animeData.length : 0,
+        data: Array.isArray(animeData) ? animeData : [],
         source: 'sankavollerei'
       });
     }
@@ -375,7 +316,6 @@ app.get('/otakudesu/completed', async (req, res) => {
 // ============================================
 app.get('/otakudesu/genres', async (req, res) => {
   try {
-    console.log('📂 Fetching genres...');
     const response = await axios.get(`${sankaBaseUrl}/genre`, { timeout: 20000 });
     
     if (response.data && response.data.data) {
@@ -418,7 +358,6 @@ app.get('/otakudesu/genres/:slug', async (req, res) => {
   const { page = 1 } = req.query;
   
   try {
-    console.log(`📂 Fetching genre: ${slug} (page: ${page})`);
     const response = await axios.get(`${sankaBaseUrl}/genre/${slug}`, {
       params: { page },
       timeout: 20000
@@ -427,30 +366,16 @@ app.get('/otakudesu/genres/:slug', async (req, res) => {
     if (response.data && response.data.data) {
       let genreData = response.data.data;
       
-      // Check if data contains anime array
       if (genreData.anime && Array.isArray(genreData.anime)) {
         genreData = genreData.anime;
-      }
-      
-      // Ensure it's an array
-      if (!Array.isArray(genreData)) {
-        console.error('Genre data is not an array');
-        return res.json({
-          success: true,
-          genre: slug,
-          page: parseInt(page),
-          count: 0,
-          data: [],
-          source: 'sankavollerei'
-        });
       }
       
       return res.json({
         success: true,
         genre: slug,
         page: parseInt(page),
-        count: genreData.length,
-        data: genreData,
+        count: Array.isArray(genreData) ? genreData.length : 0,
+        data: Array.isArray(genreData) ? genreData : [],
         source: 'sankavollerei'
       });
     }
@@ -480,33 +405,15 @@ app.get('/otakudesu/anime/:slug', async (req, res) => {
   const { slug } = req.params;
   
   try {
-    console.log(`📺 Fetching anime detail: ${slug}`);
     const response = await axios.get(`${sankaBaseUrl}/anime/${slug}`, { 
       timeout: 20000 
     });
     
     if (response.data && response.data.data) {
-      const animeData = response.data.data;
-      
-      // Sankavollerei API tidak mengembalikan episode_list di detail anime
-      // Episode list harus di-fetch dari halaman anime terpisah di client
-      // atau menggunakan endpoint khusus
-      
-      // Log untuk debugging
-      if (animeData.episode_list) {
-        console.log(`📺 Episode list found: ${animeData.episode_list.length} episodes`);
-      } else if (animeData.episodes) {
-        console.log(`📺 Episodes found: ${animeData.episodes.length} episodes`);
-      } else {
-        console.log('⚠️ No episode list in anime detail - this is normal for Sankavollerei API');
-        console.log('💡 Client should fetch episodes separately or use batch endpoint');
-      }
-      
       return res.json({
         success: true,
-        data: animeData,
-        source: 'sankavollerei',
-        note: 'Episode list not included - fetch from batch or episode endpoints'
+        data: response.data.data,
+        source: 'sankavollerei'
       });
     }
     
@@ -533,140 +440,76 @@ app.get('/otakudesu/anime/:slug', async (req, res) => {
 });
 
 // ============================================
-// ANIME BATCH - Get anime with episodes
-// ============================================
-app.get('/otakudesu/batch/:slug', async (req, res) => {
-  const { slug } = req.params;
-  
-  try {
-    console.log(`📦 Fetching batch: ${slug}`);
-    const response = await axios.get(`${sankaBaseUrl}/batch/${slug}`, { 
-      timeout: 20000 
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        data: response.data.data,
-        source: 'sankavollerei'
-      });
-    }
-    
-    return res.status(404).json({
-      success: false,
-      error: 'Batch not found'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching batch:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch batch',
-      message: error.message
-    });
-  }
-});
-
-// ============================================
-// EPISODE DETAIL & STREAMING LINKS
+// EPISODE STREAMING LINKS - WITH PUPPETEER SCRAPING 🔥
 // ============================================
 app.get('/otakudesu/episode/:slug', async (req, res) => {
   const { slug } = req.params;
   
   try {
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`📺 EPISODE REQUEST: ${slug}`);
-    console.log(`${'='.repeat(60)}`);
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`🎬 EPISODE STREAMING REQUEST`);
+    console.log(`📺 Episode: ${slug}`);
+    console.log(`🔥 Method: Puppeteer Web Scraping (Direct to Otakudesu.cloud)`);
+    console.log(`${'='.repeat(70)}`);
     
-    const response = await axios.get(`${sankaBaseUrl}/episode/${slug}`, { 
-      timeout: 20000 
-    });
+    // SCRAPE DIRECTLY FROM OTAKUDESU.CLOUD
+    const streamingLinks = await scraper.getStreamingLink(slug);
     
-    if (response.data && response.data.data) {
-      const episodeData = response.data.data;
+    if (streamingLinks && streamingLinks.length > 0) {
+      // Transform to match expected format
+      const formattedLinks = streamingLinks.map(link => ({
+        provider: link.provider,
+        url: link.url,
+        type: link.type,
+        quality: link.quality || 'auto',
+        source: link.source,
+        serverId: null
+      }));
       
-      // Transform streaming links
-      const streamLinks = [];
-      
-      if (episodeData.stream) {
-        Object.keys(episodeData.stream).forEach(quality => {
-          const servers = episodeData.stream[quality];
-          servers.forEach(server => {
-            streamLinks.push({
-              provider: server.name || quality,
-              url: server.url || server.link,
-              type: 'iframe',
-              quality: quality,
-              serverId: server.id || server.post,
-              source: 'sankavollerei'
-            });
-          });
-        });
-      }
+      console.log(`\n${'='.repeat(70)}`);
+      console.log(`✅ SUCCESS!`);
+      console.log(`📊 Total Links: ${formattedLinks.length}`);
+      console.log(`🎥 MP4: ${formattedLinks.filter(l => l.type === 'mp4').length}`);
+      console.log(`📡 HLS: ${formattedLinks.filter(l => l.type === 'hls').length}`);
+      console.log(`${'='.repeat(70)}\n`);
       
       return res.json({
         success: true,
-        count: streamLinks.length,
-        data: streamLinks,
+        count: formattedLinks.length,
+        data: formattedLinks,
         episodeInfo: {
-          title: episodeData.title,
-          episode: episodeData.episode,
-          anime: episodeData.anime,
-          prevEpisode: episodeData.prev_episode,
-          nextEpisode: episodeData.next_episode
+          title: slug,
+          episode: slug
         },
-        source: 'sankavollerei'
+        source: 'puppeteer-scraper'
       });
     }
     
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`⚠️ NO STREAMING LINKS FOUND`);
+    console.log(`📺 Episode: ${slug}`);
+    console.log(`💡 Possible reasons:`);
+    console.log(`   - Episode not yet released`);
+    console.log(`   - Invalid episode slug`);
+    console.log(`   - Scraping failed (check logs above)`);
+    console.log(`${'='.repeat(70)}\n`);
+    
     return res.json({
-      success: false,
+      success: true,
       count: 0,
       data: [],
-      error: 'No streaming links found'
+      error: 'No streaming links found',
+      source: 'puppeteer-scraper',
+      hint: 'Check if episode exists on Otakudesu.cloud'
     });
   } catch (error) {
-    console.error('❌ Error fetching episode:', error.message);
+    console.error('\n❌ EPISODE SCRAPING ERROR:');
+    console.error(error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch episode',
-      message: error.message
-    });
-  }
-});
-
-// ============================================
-// SERVER - Get embed URL
-// ============================================
-app.get('/otakudesu/server/:serverId', async (req, res) => {
-  const { serverId } = req.params;
-  
-  try {
-    console.log(`📡 Fetching server: ${serverId}`);
-    const response = await axios.get(`${sankaBaseUrl}/server/${serverId}`, { 
-      timeout: 20000 
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        data: {
-          url: response.data.data.url || response.data.data.link,
-          serverId: serverId
-        },
-        source: 'sankavollerei'
-      });
-    }
-    
-    return res.json({
-      success: false,
-      error: 'Server URL not found'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching server:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch server',
-      message: error.message
+      error: 'Failed to fetch streaming links',
+      message: error.message,
+      source: 'puppeteer-scraper'
     });
   }
 });
@@ -686,7 +529,6 @@ app.get('/otakudesu/search', async (req, res) => {
   }
   
   try {
-    console.log(`🔍 Searching: ${q}`);
     const response = await axios.get(`${sankaBaseUrl}/search/${encodeURIComponent(q)}`, { 
       timeout: 20000 
     });
@@ -739,46 +581,79 @@ app.use((err, req, res, next) => {
 });
 
 // ============================================
+// CLEANUP ON EXIT
+// ============================================
+async function gracefulShutdown(signal) {
+  console.log(`\n🛑 ${signal} received, shutting down gracefully...`);
+  
+  // Close Puppeteer browser
+  try {
+    await scraper.closeBrowser();
+    console.log('✅ Puppeteer browser closed');
+  } catch (e) {
+    console.error('⚠️ Error closing browser:', e.message);
+  }
+  
+  // Close server
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
+  
+  // Force exit after 10 seconds
+  setTimeout(() => {
+    console.error('❌ Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+process.on('uncaughtException', error => {
+  console.error('❌ Uncaught Exception:', error);
+  gracefulShutdown('UNCAUGHT_EXCEPTION');
+});
+
+process.on('unhandledRejection', reason => {
+  console.error('❌ Unhandled Rejection:', reason);
+  gracefulShutdown('UNHANDLED_REJECTION');
+});
+
+// ============================================
 // START SERVER
 // ============================================
 const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`
-╔════════════════════════════════════════════════════════════╗
-║  🎌 SUKINIME API v5.0.0                                   ║
-╠════════════════════════════════════════════════════════════╣
-║  📡 Port: ${PORT.toString().padEnd(48)} ║
-║  🔗 Source: Sankavollerei API                             ║
-║  🌐 Base: https://www.sankavollerei.com/anime            ║
-╠════════════════════════════════════════════════════════════╣
-║  🚀 Status: Ready (Production)                            ║
-║  📊 Features: Search, Pagination, Streaming               ║
-║  🔧 Fixed: Response parsing for all endpoints             ║
-╚════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════════════╗
+║                                                                   ║
+║  🎌 SUKINIME API v6.0.0                                          ║
+║  Sankavollerei + Puppeteer Scraper                               ║
+║                                                                   ║
+╠═══════════════════════════════════════════════════════════════════╣
+║                                                                   ║
+║  📡 Port: ${PORT.toString().padEnd(55)} ║
+║  🔗 Metadata: Sankavollerei API                                  ║
+║  🔥 Streaming: Puppeteer Scraper (Otakudesu.cloud)              ║
+║  🌐 Base URL: https://www.sankavollerei.com/anime               ║
+║  🎯 Scraping: https://otakudesu.cloud                            ║
+║                                                                   ║
+╠═══════════════════════════════════════════════════════════════════╣
+║                                                                   ║
+║  ✅ Features:                                                     ║
+║     • Direct MP4/HLS Video Links                                 ║
+║     • Network Request Interception                               ║
+║     • Blogger Video Extraction                                   ║
+║     • Multiple Quality Options                                   ║
+║     • Axios Fallback (when Puppeteer unavailable)                ║
+║                                                                   ║
+╠═══════════════════════════════════════════════════════════════════╣
+║                                                                   ║
+║  🚀 Status: READY FOR PRODUCTION                                 ║
+║  📊 Scraper: INITIALIZED                                         ║
+║  🔧 Mode: Hybrid (Sankavollerei + Puppeteer)                     ║
+║                                                                   ║
+╚═══════════════════════════════════════════════════════════════════╝
   `);
-});
-
-// Graceful Shutdown
-process.on('SIGTERM', () => {
-  console.log('\n🛑 SIGTERM received, shutting down...');
-  server.close(() => {
-    console.log('✅ Server closed');
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', () => {
-  console.log('\n🛑 SIGINT received, shutting down...');
-  server.close(() => {
-    console.log('✅ Server closed');
-    process.exit(0);
-  });
-});
-
-process.on('uncaughtException', error => {
-  console.error('❌ Uncaught Exception:', error);
-});
-
-process.on('unhandledRejection', reason => {
-  console.error('❌ Unhandled Rejection:', reason);
 });
