@@ -1,4 +1,4 @@
-// server.js - Hybrid API (Sankavollerei + Puppeteer Scraper for Episodes Only)
+// server.js - UPDATE: Add timeout handling only
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -14,6 +14,13 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+
+// 🔥 NEW: Increase server timeout
+app.use((req, res, next) => {
+  req.setTimeout(45000); // 45 seconds
+  res.setTimeout(45000);
+  next();
+});
 
 // Logging
 app.use((req, res, next) => {
@@ -32,13 +39,14 @@ app.get('/', (req, res) => {
   res.json({
     status: 'OK',
     message: 'Sukinime API - Sankavollerei + Puppeteer Scraper',
-    version: '6.0.0',
+    version: '6.1.0',
     description: 'Hybrid API: Sankavollerei for metadata + Puppeteer for video extraction',
     features: [
       'Sankavollerei API for anime data',
-      'Puppeteer scraping for direct video links',
+      'Optimized Puppeteer scraping (parallel extraction)',
       'MP4 & HLS stream support',
-      'Multi-quality extraction'
+      'Multi-quality extraction',
+      '45s timeout protection'
     ],
     routes: {
       home: 'GET /otakudesu/home',
@@ -49,7 +57,7 @@ app.get('/', (req, res) => {
       genres: 'GET /otakudesu/genres',
       genreDetail: 'GET /otakudesu/genres/:slug?page=1',
       animeDetail: 'GET /otakudesu/anime/:slug',
-      episode: 'GET /otakudesu/episode/:slug (⚡ WITH PUPPETEER SCRAPING)',
+      episode: 'GET /otakudesu/episode/:slug (⚡ OPTIMIZED)',
       search: 'GET /otakudesu/search?q=naruto'
     }
   });
@@ -443,19 +451,28 @@ app.get('/otakudesu/anime/:slug', async (req, res) => {
 });
 
 // ============================================
-// ⚡ EPISODE - WITH PUPPETEER SCRAPING (MAIN FEATURE!)
+// ⚡ EPISODE - OPTIMIZED WITH TIMEOUT PROTECTION
 // ============================================
 app.get('/otakudesu/episode/:slug', async (req, res) => {
   const { slug } = req.params;
   
   try {
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🎬 EPISODE REQUEST: ${slug}`);
-    console.log(`⚡ Using Puppeteer Scraper for video extraction`);
+    console.log(`⚡ OPTIMIZED EPISODE REQUEST: ${slug}`);
     console.log(`${'='.repeat(60)}`);
     
-    // Use scraper to extract video links
-    const streamingLinks = await scraper.getStreamingLink(slug);
+    // 🔥 NEW: Race condition with timeout
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Scraping timeout after 38s')), 38000);
+    });
+    
+    const scrapingPromise = scraper.getStreamingLink(slug);
+    
+    // Race between scraping and timeout
+    const streamingLinks = await Promise.race([
+      scrapingPromise,
+      timeoutPromise
+    ]);
     
     if (streamingLinks && streamingLinks.length > 0) {
       const formattedLinks = streamingLinks.map(link => ({
@@ -480,7 +497,7 @@ app.get('/otakudesu/episode/:slug', async (req, res) => {
           episode: slug,
           anime: null
         },
-        source: 'puppeteer-scraper'
+        source: 'optimized-scraper'
       });
     }
     
@@ -492,14 +509,27 @@ app.get('/otakudesu/episode/:slug', async (req, res) => {
       count: 0,
       data: [],
       message: 'No video links found. Episode may not exist or scraper needs update.',
-      source: 'puppeteer-scraper'
+      source: 'optimized-scraper'
     });
   } catch (error) {
     console.error('❌ Error scraping episode:', error.message);
+    
+    // Handle timeout gracefully
+    if (error.message.includes('timeout')) {
+      return res.json({
+        success: false,
+        error: 'Scraping timeout',
+        message: 'Episode scraping took too long. Please try again.',
+        data: [],
+        tip: 'Some episodes have complex protection that takes longer to bypass.'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       error: 'Failed to scrape episode',
-      message: error.message
+      message: error.message,
+      data: []
     });
   }
 });
@@ -573,8 +603,6 @@ app.get('/otakudesu/debug/episode/:slug', async (req, res) => {
     const debug = {
       url: `https://otakudesu.cloud/episode/${slug}`,
       title: $('title').text(),
-      
-      // Find all potential video containers
       mirrorstream: [],
       download: [],
       iframes: [],
@@ -582,7 +610,6 @@ app.get('/otakudesu/debug/episode/:slug', async (req, res) => {
       allLinks: []
     };
     
-    // Check .mirrorstream
     $('.mirrorstream').each((i, el) => {
       debug.mirrorstream.push({
         html: $(el).html()?.substring(0, 500),
@@ -597,7 +624,6 @@ app.get('/otakudesu/debug/episode/:slug', async (req, res) => {
       });
     });
     
-    // Check .download
     $('.download').each((i, el) => {
       debug.download.push({
         html: $(el).html()?.substring(0, 500),
@@ -611,7 +637,6 @@ app.get('/otakudesu/debug/episode/:slug', async (req, res) => {
       });
     });
     
-    // Check all iframes
     $('iframe[src]').each((i, el) => {
       debug.iframes.push({
         src: $(el).attr('src'),
@@ -620,7 +645,6 @@ app.get('/otakudesu/debug/episode/:slug', async (req, res) => {
       });
     });
     
-    // Check data-content
     $('[data-content]').each((i, el) => {
       debug.dataContent.push({
         text: $(el).text().trim(),
@@ -629,7 +653,6 @@ app.get('/otakudesu/debug/episode/:slug', async (req, res) => {
       });
     });
     
-    // All links with video providers
     $('a[href]').each((i, el) => {
       const href = $(el).attr('href') || '';
       if (href.includes('desustream') || 
@@ -709,22 +732,22 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║  🎌 SUKINIME API v6.0.0 - HYBRID EDITION                  ║
+║  🎌 SUKINIME API v6.1.0 - OPTIMIZED EDITION               ║
 ╠════════════════════════════════════════════════════════════╣
 ║  📡 Port: ${PORT.toString().padEnd(48)} ║
 ║  🔗 Metadata: Sankavollerei API                           ║
-║  ⚡ Video Scraping: Puppeteer + Axios                     ║
+║  ⚡ Video Scraping: Optimized Puppeteer + Axios           ║
 ╠════════════════════════════════════════════════════════════╣
 ║  📚 Data Sources:                                         ║
 ║     • Home, Schedule, Search → Sankavollerei              ║
 ║     • Anime Details, Genres → Sankavollerei               ║
-║     • Episode Video Links → Puppeteer Scraper ⚡          ║
+║     • Episode Video Links → Optimized Scraper ⚡          ║
 ╠════════════════════════════════════════════════════════════╣
-║  🎯 Features:                                             ║
-║     • Direct MP4/HLS extraction                           ║
-║     • Multi-quality support                               ║
-║     • Blogger video detection                             ║
-║     • Network request interception                        ║
+║  🎯 Optimizations:                                        ║
+║     • 45s server timeout                                  ║
+║     • 38s scraping timeout with race condition            ║
+║     • Parallel video extraction                           ║
+║     • Graceful timeout handling                           ║
 ╠════════════════════════════════════════════════════════════╣
 ║  🚀 Status: Ready                                         ║
 ╚════════════════════════════════════════════════════════════╝
