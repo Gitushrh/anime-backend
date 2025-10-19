@@ -1,11 +1,9 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-const AnimeScraper = require('./utils/scraper');
 
 const app = express();
-const scraper = new AnimeScraper();
-const wajikBaseUrl = 'https://wajik-anime-api.vercel.app/otakudesu';
+const sankaBaseUrl = 'https://www.sankavollerei.com/anime';
 
 // Middleware
 app.use(cors({
@@ -30,99 +28,59 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'OK',
-    message: 'Anime Streaming API',
-    version: '3.2.0',
-    mode: 'Wajik Primary + Otakudesu Fallback',
+    message: 'Sukinime API - Sankavollerei Backend',
+    version: '4.0.0',
+    apiSource: 'Sankavollerei API',
     routes: {
       home: 'GET /otakudesu/home',
       schedule: 'GET /otakudesu/schedule',
-      anime: 'GET /otakudesu/anime',
-      animeWithSearch: 'GET /otakudesu/anime?q=naruto&page=1',
-      genres: 'GET /otakudesu/genres',
+      allAnime: 'GET /otakudesu/anime?page=1&q=naruto',
       ongoing: 'GET /otakudesu/ongoing?page=1',
       completed: 'GET /otakudesu/completed?page=1',
+      genres: 'GET /otakudesu/genres',
+      genreDetail: 'GET /otakudesu/genres/:slug?page=1',
+      animeDetail: 'GET /otakudesu/anime/:slug',
+      episode: 'GET /otakudesu/episode/:slug',
       search: 'GET /otakudesu/search?q=naruto',
-      genreDetail: 'GET /otakudesu/genres/:genreId?page=1',
-      animeDetail: 'GET /otakudesu/anime/:animeId',
-      episode: 'GET /otakudesu/episode/:episodeId',
       server: 'GET /otakudesu/server/:serverId'
     }
   });
 });
 
 // ============================================
-// HELPER: Proxy dengan Fallback
+// HOME - Data dari halaman utama
 // ============================================
-async function proxyWithFallback(req, res, endpoint, dataTransform) {
-  try {
-    console.log(`📡 [${endpoint}] Trying Wajik API...`);
-    const response = await axios.get(`${wajikBaseUrl}${endpoint}`, {
-      params: req.query,
-      timeout: 20000
-    });
-
-    if (response.data && response.data.ok) {
-      console.log(`✅ [${endpoint}] Success from Wajik`);
-      const transformedData = dataTransform(response.data);
-      return res.json({
-        success: true,
-        source: 'wajik-api',
-        ...transformedData
-      });
-    }
-  } catch (error) {
-    console.log(`⚠️ [${endpoint}] Wajik failed: ${error.message}`);
-  }
-
-  // Fallback ke scraper otakudesu
-  console.log(`📡 [${endpoint}] Falling back to Otakudesu scraper...`);
-  try {
-    const scrapedData = await scraper[endpoint](req.query);
-    console.log(`✅ [${endpoint}] Success from scraper`);
-    return res.json({
-      success: true,
-      source: 'otakudesu-scrape',
-      ...scrapedData
-    });
-  } catch (scrapError) {
-    console.error(`❌ [${endpoint}] All sources failed: ${scrapError.message}`);
-    return res.status(500).json({
-      success: false,
-      error: 'Failed to fetch data',
-      message: scrapError.message
-    });
-  }
-}
-
-// ============================================
-// ENDPOINTS
-// ============================================
-
-// Home
 app.get('/otakudesu/home', async (req, res) => {
   try {
-    const response = await axios.get(`${wajikBaseUrl}/home`, { timeout: 20000 });
-    if (response.data && response.data.ok && response.data.data) {
+    console.log('📡 Fetching home...');
+    const response = await axios.get(`${sankaBaseUrl}/home`, { timeout: 20000 });
+    
+    if (response.data && response.data.data) {
+      const data = response.data.data;
+      
+      // Transform data
+      const homeList = [];
+      
+      // Gabungkan semua section (ongoing, complete)
+      if (data.ongoing) homeList.push(...data.ongoing);
+      if (data.complete) homeList.push(...data.complete);
+      
       return res.json({
         success: true,
-        count: response.data.data.homeList?.length || 0,
-        data: response.data.data.homeList || [],
-        source: 'wajik-api'
+        count: homeList.length,
+        data: homeList,
+        source: 'sankavollerei'
       });
     }
-  } catch (error) {
-    console.log(`⚠️ Wajik /home failed, trying scraper...`);
-  }
-
-  try {
-    const animes = await scraper.getLatestAnime();
+    
     return res.json({
       success: true,
-      count: animes.length,
-      data: animes,
-      source: 'otakudesu-scrape'
+      count: 0,
+      data: [],
+      source: 'sankavollerei'
     });
   } catch (error) {
+    console.error('❌ Error fetching home:', error.message);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch home',
@@ -131,83 +89,48 @@ app.get('/otakudesu/home', async (req, res) => {
   }
 });
 
-// Schedule - dengan mapping hari ke Indonesian
+// ============================================
+// SCHEDULE - Jadwal rilis per hari
+// ============================================
 app.get('/otakudesu/schedule', async (req, res) => {
   try {
-    const response = await axios.get(`${wajikBaseUrl}/schedule`, { timeout: 20000 });
-    if (response.data && response.data.ok && response.data.data?.days) {
-      const schedule = {};
+    console.log('📅 Fetching schedule...');
+    const response = await axios.get(`${sankaBaseUrl}/schedule`, { timeout: 20000 });
+    
+    if (response.data && response.data.data) {
+      const scheduleData = response.data.data;
       
-      // Map English days to Indonesian
+      // Map English to Indonesian day names
       const dayMap = {
-        'Monday': 'Senin',
-        'Tuesday': 'Selasa', 
-        'Wednesday': 'Rabu',
-        'Thursday': 'Kamis',
-        'Friday': 'Jumat',
-        'Saturday': 'Sabtu',
-        'Sunday': 'Minggu'
+        'monday': 'Senin',
+        'tuesday': 'Selasa',
+        'wednesday': 'Rabu',
+        'thursday': 'Kamis',
+        'friday': 'Jumat',
+        'saturday': 'Sabtu',
+        'sunday': 'Minggu'
       };
       
-      response.data.data.days.forEach(day => {
-        const dayName = dayMap[day.day] || day.day;
-        schedule[dayName] = day.animeList || [];
+      const schedule = {};
+      Object.keys(scheduleData).forEach(day => {
+        const dayName = dayMap[day.toLowerCase()] || day;
+        schedule[dayName] = scheduleData[day] || [];
       });
       
       return res.json({
         success: true,
         data: schedule,
-        source: 'wajik-api'
+        source: 'sankavollerei'
       });
     }
-  } catch (error) {
-    console.log(`⚠️ Wajik /schedule failed, trying scraper...`);
-  }
-
-  try {
-    const $ = await scraper.fetchHTML('https://otakudesu.cloud/jadwal');
-    const schedule = {};
-    const dayMap = {
-      'Senin': 'Senin', 'Selasa': 'Selasa', 'Rabu': 'Rabu',
-      'Kamis': 'Kamis', 'Jumat': 'Jumat', 'Sabtu': 'Sabtu', 'Minggu': 'Minggu'
-    };
-
-    $('h2, h3, strong').each((i, el) => {
-      const dayText = $(el).text().trim();
-      if (!dayMap[dayText]) return;
-
-      const animes = [];
-      let $current = $(el).next();
-      let depth = 0;
-
-      while ($current.length && depth < 20) {
-        $current.find('a[href*="/anime/"]').each((idx, linkEl) => {
-          const title = $(linkEl).text().trim();
-          const href = $(linkEl).attr('href') || '';
-          const id = href.split('/').filter(p => p).pop() || '';
-          if (title && id && title.length > 2) {
-            animes.push({
-              id,
-              title,
-              href,
-              url: href.startsWith('http') ? href : `https://otakudesu.cloud${href}`
-            });
-          }
-        });
-        if (animes.length > 0) break;
-        $current = $current.next();
-        depth++;
-      }
-
-      if (animes.length > 0) schedule[dayText] = animes;
-    });
-
+    
     return res.json({
-      success: Object.keys(schedule).length > 0,
-      data: schedule,
-      source: 'otakudesu-scrape'
+      success: true,
+      data: {},
+      source: 'sankavollerei'
     });
   } catch (error) {
+    console.error('❌ Error fetching schedule:', error.message);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch schedule',
@@ -216,312 +139,339 @@ app.get('/otakudesu/schedule', async (req, res) => {
   }
 });
 
-// All Anime - dengan support search dan pagination
+// ============================================
+// ALL ANIME - Unlimited dengan search
+// ============================================
 app.get('/otakudesu/anime', async (req, res) => {
   const { q, page = 1 } = req.query;
   
-  // Jika ada query search, redirect ke search endpoint
-  if (q && q.trim().length > 0) {
-    try {
-      console.log(`🔍 Search anime: ${q} (page: ${page})`);
-      const response = await axios.get(`${wajikBaseUrl}/search/${encodeURIComponent(q)}`, { 
-        timeout: 20000,
-        params: { page }
+  try {
+    // Jika ada query search
+    if (q && q.trim().length > 0) {
+      console.log(`🔍 Searching: ${q}`);
+      const response = await axios.get(`${sankaBaseUrl}/search/${encodeURIComponent(q)}`, { 
+        timeout: 20000 
       });
       
-      if (response.data && response.data.ok && response.data.data?.animeList) {
+      if (response.data && response.data.data) {
         return res.json({
           success: true,
           query: q,
           page: parseInt(page),
-          count: response.data.data.animeList.length,
-          data: response.data.data.animeList,
-          source: 'wajik-api'
+          count: response.data.data.length,
+          data: response.data.data,
+          source: 'sankavollerei'
         });
       }
-    } catch (error) {
-      console.log(`⚠️ Wajik /search failed, trying scraper...`);
     }
-
-    // Fallback ke scraper untuk search
-    try {
-      const results = await scraper.searchAnime(q);
-      return res.json({
-        success: true,
-        query: q,
-        page: parseInt(page),
-        count: results.length,
-        data: results,
-        source: 'otakudesu-scrape'
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to search',
-        message: error.message
-      });
-    }
-  }
-  
-  // Jika tidak ada query, ambil semua anime dengan pagination
-  try {
+    
+    // Jika tidak ada query, ambil semua anime (unlimited)
     console.log(`📚 Fetching all anime (page: ${page})`);
-    const response = await axios.get(`${wajikBaseUrl}/anime`, { 
-      timeout: 20000,
-      params: { page }
+    const response = await axios.get(`${sankaBaseUrl}/unlimited`, { 
+      timeout: 30000 
     });
     
-    if (response.data && response.data.ok && response.data.data?.animeList) {
+    if (response.data && response.data.data) {
+      const allAnime = response.data.data;
+      
+      // Pagination manual (20 items per page)
+      const itemsPerPage = 20;
+      const startIndex = (parseInt(page) - 1) * itemsPerPage;
+      const endIndex = startIndex + itemsPerPage;
+      const paginatedData = allAnime.slice(startIndex, endIndex);
+      
       return res.json({
         success: true,
         page: parseInt(page),
-        count: response.data.data.animeList.length,
-        data: response.data.data.animeList,
-        source: 'wajik-api'
+        count: paginatedData.length,
+        total: allAnime.length,
+        hasMore: endIndex < allAnime.length,
+        data: paginatedData,
+        source: 'sankavollerei'
       });
     }
-  } catch (error) {
-    console.log(`⚠️ Wajik /anime failed, trying scraper...`);
-  }
-
-  // Fallback ke scraper
-  try {
-    const cheerio = require('cheerio');
-    const response = await axios.get('https://otakudesu.cloud/anime', {
-      timeout: 20000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-    });
-    const $ = cheerio.load(response.data);
-    const animes = [];
-
-    $('.venz ul li').each((i, el) => {
-      const $el = $(el);
-      const title = $el.find('.jdlflm').text().trim();
-      const poster = $el.find('.thumbz img').attr('src');
-      const url = $el.find('.thumb a').attr('href');
-      const id = url ? url.split('/').filter(p => p).pop() : '';
-
-      if (title && id) {
-        animes.push({ 
-          id, 
-          title, 
-          poster: poster || '', 
-          url, 
-          episode: $el.find('.epz').text().trim() 
-        });
-      }
-    });
-
+    
     return res.json({
       success: true,
       page: parseInt(page),
-      count: animes.length,
-      data: animes,
-      source: 'otakudesu-scrape'
+      count: 0,
+      data: [],
+      source: 'sankavollerei'
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to fetch anime list', 
-      message: error.message 
-    });
-  }
-});
-
-// Genres
-app.get('/otakudesu/genres', async (req, res) => {
-  try {
-    const response = await axios.get(`${wajikBaseUrl}/genres`, { timeout: 20000 });
-    if (response.data && response.data.ok && response.data.data?.genreList) {
-      const genres = response.data.data.genreList.map(g => ({
-        id: g.genreId,
-        name: g.title,
-        url: g.otakudesuUrl
-      }));
-      return res.json({
-        success: true,
-        count: genres.length,
-        data: genres,
-        source: 'wajik-api'
-      });
-    }
-  } catch (error) {
-    console.log(`⚠️ Wajik /genres failed, trying scraper...`);
-  }
-
-  res.json({
-    success: true,
-    data: [],
-    source: 'cache'
-  });
-});
-
-// Ongoing
-app.get('/otakudesu/ongoing', async (req, res) => {
-  const { page = 1 } = req.query;
-  try {
-    const response = await axios.get(`${wajikBaseUrl}/ongoing`, {
-      params: { page },
-      timeout: 20000
-    });
-    if (response.data && response.data.ok && response.data.data?.animeList) {
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        count: response.data.data.animeList.length,
-        data: response.data.data.animeList,
-        source: 'wajik-api'
-      });
-    }
-  } catch (error) {
-    console.log(`⚠️ Wajik /ongoing failed, trying scraper...`);
-  }
-
-  res.json({ success: true, page: parseInt(page), data: [], source: 'cache' });
-});
-
-// Completed
-app.get('/otakudesu/completed', async (req, res) => {
-  const { page = 1 } = req.query;
-  try {
-    const response = await axios.get(`${wajikBaseUrl}/completed`, {
-      params: { page },
-      timeout: 20000
-    });
-    if (response.data && response.data.ok && response.data.data?.animeList) {
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        count: response.data.data.animeList.length,
-        data: response.data.data.animeList,
-        source: 'wajik-api'
-      });
-    }
-  } catch (error) {
-    console.log(`⚠️ Wajik /completed failed, trying scraper...`);
-  }
-
-  res.json({ success: true, page: parseInt(page), data: [], source: 'cache' });
-});
-
-// Search
-app.get('/otakudesu/search', async (req, res) => {
-  const { q } = req.query;
-
-  if (!q || q.trim().length === 0) {
-    return res.status(400).json({
-      success: false,
-      error: 'Query parameter (q) is required',
-      example: '/otakudesu/search?q=naruto'
-    });
-  }
-
-  try {
-    const response = await axios.get(`${wajikBaseUrl}/search/${encodeURIComponent(q)}`, { timeout: 20000 });
-    if (response.data && response.data.ok && response.data.data?.animeList) {
-      return res.json({
-        success: true,
-        query: q,
-        count: response.data.data.animeList.length,
-        data: response.data.data.animeList,
-        source: 'wajik-api'
-      });
-    }
-  } catch (error) {
-    console.log(`⚠️ Wajik /search failed, trying scraper...`);
-  }
-
-  try {
-    const results = await scraper.searchAnime(q);
-    return res.json({
-      success: true,
-      query: q,
-      count: results.length,
-      data: results,
-      source: 'otakudesu-scrape'
-    });
-  } catch (error) {
+    console.error('❌ Error fetching anime:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to search',
+      error: 'Failed to fetch anime',
       message: error.message
     });
   }
 });
 
-// Genre Detail
-app.get('/otakudesu/genres/:genreId', async (req, res) => {
-  const { genreId } = req.params;
+// ============================================
+// ONGOING ANIME
+// ============================================
+app.get('/otakudesu/ongoing', async (req, res) => {
   const { page = 1 } = req.query;
-
+  
   try {
-    const response = await axios.get(`${wajikBaseUrl}/genres/${genreId}`, {
+    console.log(`📡 Fetching ongoing (page: ${page})`);
+    const response = await axios.get(`${sankaBaseUrl}/ongoing-anime`, {
       params: { page },
       timeout: 20000
     });
-    if (response.data && response.data.ok && response.data.data?.animeList) {
+    
+    if (response.data && response.data.data) {
       return res.json({
         success: true,
-        genre: genreId,
         page: parseInt(page),
-        count: response.data.data.animeList.length,
-        data: response.data.data.animeList,
-        source: 'wajik-api'
+        count: response.data.data.length,
+        data: response.data.data,
+        source: 'sankavollerei'
       });
     }
+    
+    return res.json({
+      success: true,
+      page: parseInt(page),
+      count: 0,
+      data: [],
+      source: 'sankavollerei'
+    });
   } catch (error) {
-    console.log(`⚠️ Wajik /genres/:genreId failed, trying scraper...`);
+    console.error('❌ Error fetching ongoing:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch ongoing anime',
+      message: error.message
+    });
   }
-
-  res.json({ success: true, genre: genreId, page: parseInt(page), data: [], source: 'cache' });
 });
 
-// Anime Detail
-app.get('/otakudesu/anime/:animeId', async (req, res) => {
-  const { animeId } = req.params;
-
+// ============================================
+// COMPLETED ANIME
+// ============================================
+app.get('/otakudesu/completed', async (req, res) => {
+  const { page = 1 } = req.query;
+  
   try {
-    const response = await axios.get(`${wajikBaseUrl}/anime/${animeId}`, { timeout: 20000 });
-    if (response.data && response.data.ok && response.data.data) {
+    console.log(`📡 Fetching completed (page: ${page})`);
+    const response = await axios.get(`${sankaBaseUrl}/complete-anime/${page}`, {
+      timeout: 20000
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        page: parseInt(page),
+        count: response.data.data.length,
+        data: response.data.data,
+        source: 'sankavollerei'
+      });
+    }
+    
+    return res.json({
+      success: true,
+      page: parseInt(page),
+      count: 0,
+      data: [],
+      source: 'sankavollerei'
+    });
+  } catch (error) {
+    console.error('❌ Error fetching completed:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch completed anime',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// GENRES LIST
+// ============================================
+app.get('/otakudesu/genres', async (req, res) => {
+  try {
+    console.log('📂 Fetching genres...');
+    const response = await axios.get(`${sankaBaseUrl}/genre`, { timeout: 20000 });
+    
+    if (response.data && response.data.data) {
+      const genres = response.data.data.map(g => ({
+        id: g.slug || g.id,
+        name: g.title || g.name,
+        slug: g.slug,
+        url: g.endpoint || ''
+      }));
+      
+      return res.json({
+        success: true,
+        count: genres.length,
+        data: genres,
+        source: 'sankavollerei'
+      });
+    }
+    
+    return res.json({
+      success: true,
+      count: 0,
+      data: [],
+      source: 'sankavollerei'
+    });
+  } catch (error) {
+    console.error('❌ Error fetching genres:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch genres',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// GENRE DETAIL
+// ============================================
+app.get('/otakudesu/genres/:slug', async (req, res) => {
+  const { slug } = req.params;
+  const { page = 1 } = req.query;
+  
+  try {
+    console.log(`📂 Fetching genre: ${slug} (page: ${page})`);
+    const response = await axios.get(`${sankaBaseUrl}/genre/${slug}`, {
+      params: { page },
+      timeout: 20000
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        genre: slug,
+        page: parseInt(page),
+        count: response.data.data.length,
+        data: response.data.data,
+        source: 'sankavollerei'
+      });
+    }
+    
+    return res.json({
+      success: true,
+      genre: slug,
+      page: parseInt(page),
+      count: 0,
+      data: [],
+      source: 'sankavollerei'
+    });
+  } catch (error) {
+    console.error('❌ Error fetching genre detail:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch genre detail',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// ANIME DETAIL
+// ============================================
+app.get('/otakudesu/anime/:slug', async (req, res) => {
+  const { slug } = req.params;
+  
+  try {
+    console.log(`📺 Fetching anime detail: ${slug}`);
+    const response = await axios.get(`${sankaBaseUrl}/anime/${slug}`, { 
+      timeout: 20000 
+    });
+    
+    if (response.data && response.data.data) {
       return res.json({
         success: true,
         data: response.data.data,
-        source: 'wajik-api'
+        source: 'sankavollerei'
       });
     }
-  } catch (error) {
-    console.log(`⚠️ Wajik /anime/:animeId failed, trying scraper...`);
-  }
-
-  try {
-    const detail = await scraper.getAnimeDetail(animeId);
-    if (detail) {
-      return res.json({ success: true, data: detail, source: 'otakudesu-scrape' });
-    }
-  } catch (error) {
-    console.error(error);
-  }
-
-  res.status(404).json({ success: false, error: 'Anime not found' });
-});
-
-// Episode / Streaming Links
-app.get('/otakudesu/episode/:episodeId', async (req, res) => {
-  const { episodeId } = req.params;
-
-  console.log(`\n${'='.repeat(60)}`);
-  console.log(`📺 NEW EPISODE REQUEST: ${episodeId}`);
-  console.log(`${'='.repeat(60)}`);
-
-  try {
-    const links = await scraper.getStreamingLink(episodeId);
-    res.json({
-      success: links.length > 0,
-      count: links.length,
-      data: links,
-      source: 'otakudesu-scrape'
+    
+    return res.status(404).json({
+      success: false,
+      error: 'Anime not found'
     });
   } catch (error) {
+    console.error('❌ Error fetching anime detail:', error.message);
+    
+    if (error.response && error.response.status === 404) {
+      return res.status(404).json({
+        success: false,
+        error: 'Anime not found'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch anime detail',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// EPISODE DETAIL & STREAMING LINKS
+// ============================================
+app.get('/otakudesu/episode/:slug', async (req, res) => {
+  const { slug } = req.params;
+  
+  try {
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`📺 EPISODE REQUEST: ${slug}`);
+    console.log(`${'='.repeat(60)}`);
+    
+    const response = await axios.get(`${sankaBaseUrl}/episode/${slug}`, { 
+      timeout: 20000 
+    });
+    
+    if (response.data && response.data.data) {
+      const episodeData = response.data.data;
+      
+      // Transform streaming links
+      const streamLinks = [];
+      
+      if (episodeData.stream) {
+        Object.keys(episodeData.stream).forEach(quality => {
+          const servers = episodeData.stream[quality];
+          servers.forEach(server => {
+            streamLinks.push({
+              provider: server.name || quality,
+              url: server.url || server.link,
+              type: 'iframe',
+              quality: quality,
+              serverId: server.id || server.post,
+              source: 'sankavollerei'
+            });
+          });
+        });
+      }
+      
+      return res.json({
+        success: true,
+        count: streamLinks.length,
+        data: streamLinks,
+        episodeInfo: {
+          title: episodeData.title,
+          episode: episodeData.episode,
+          anime: episodeData.anime,
+          prevEpisode: episodeData.prev_episode,
+          nextEpisode: episodeData.next_episode
+        },
+        source: 'sankavollerei'
+      });
+    }
+    
+    return res.json({
+      success: false,
+      count: 0,
+      data: [],
+      error: 'No streaming links found'
+    });
+  } catch (error) {
+    console.error('❌ Error fetching episode:', error.message);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch episode',
@@ -530,23 +480,85 @@ app.get('/otakudesu/episode/:episodeId', async (req, res) => {
   }
 });
 
-// Server (alias untuk episode)
+// ============================================
+// SERVER - Get embed URL
+// ============================================
 app.get('/otakudesu/server/:serverId', async (req, res) => {
   const { serverId } = req.params;
-  console.log(`\n📡 Server Request: ${serverId}`);
-
+  
   try {
-    const links = await scraper.getStreamingLink(serverId);
-    res.json({
-      success: links.length > 0,
-      count: links.length,
-      data: links,
-      source: 'otakudesu-scrape'
+    console.log(`📡 Fetching server: ${serverId}`);
+    const response = await axios.get(`${sankaBaseUrl}/server/${serverId}`, { 
+      timeout: 20000 
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        data: {
+          url: response.data.data.url || response.data.data.link,
+          serverId: serverId
+        },
+        source: 'sankavollerei'
+      });
+    }
+    
+    return res.json({
+      success: false,
+      error: 'Server URL not found'
     });
   } catch (error) {
+    console.error('❌ Error fetching server:', error.message);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch server',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// SEARCH
+// ============================================
+app.get('/otakudesu/search', async (req, res) => {
+  const { q } = req.query;
+  
+  if (!q || q.trim().length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Query parameter (q) is required',
+      example: '/otakudesu/search?q=naruto'
+    });
+  }
+  
+  try {
+    console.log(`🔍 Searching: ${q}`);
+    const response = await axios.get(`${sankaBaseUrl}/search/${encodeURIComponent(q)}`, { 
+      timeout: 20000 
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        query: q,
+        count: response.data.data.length,
+        data: response.data.data,
+        source: 'sankavollerei'
+      });
+    }
+    
+    return res.json({
+      success: true,
+      query: q,
+      count: 0,
+      data: [],
+      source: 'sankavollerei'
+    });
+  } catch (error) {
+    console.error('❌ Error searching:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to search',
       message: error.message
     });
   }
@@ -579,31 +591,29 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║  🍌 ANIME STREAMING API v3.2.0                            ║
+║  🎌 SUKINIME API v4.0.0                                   ║
 ╠════════════════════════════════════════════════════════════╣
 ║  📡 Port: ${PORT.toString().padEnd(48)} ║
-║  🔗 Primary: Wajik API (Vercel)                           ║
-║  🔄 Fallback: Otakudesu Direct Scrape                     ║
+║  🔗 Source: Sankavollerei API                             ║
+║  🌐 Base: https://www.sankavollerei.com/anime            ║
 ╠════════════════════════════════════════════════════════════╣
-║  🚀 Status: Ready (Production Mode)                       ║
-║  📊 Mode: Hybrid Proxy + Search Support                   ║
+║  🚀 Status: Ready (Production)                            ║
+║  📊 Features: Search, Pagination, Streaming               ║
 ╚════════════════════════════════════════════════════════════╝
   `);
 });
 
 // Graceful Shutdown
-process.on('SIGTERM', async () => {
+process.on('SIGTERM', () => {
   console.log('\n🛑 SIGTERM received, shutting down...');
-  await scraper.closeBrowser();
   server.close(() => {
     console.log('✅ Server closed');
     process.exit(0);
   });
 });
 
-process.on('SIGINT', async () => {
+process.on('SIGINT', () => {
   console.log('\n🛑 SIGINT received, shutting down...');
-  await scraper.closeBrowser();
   server.close(() => {
     console.log('✅ Server closed');
     process.exit(0);
