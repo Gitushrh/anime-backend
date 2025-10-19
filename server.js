@@ -1,11 +1,12 @@
+// server.js - Hybrid API (Sankavollerei + Puppeteer Scraper for Episodes Only)
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-const AnimeScraper = require('./utils/scraper'); // Import your scraper
+const AnimeScraper = require('./utils/scraper');
 
 const app = express();
 const sankaBaseUrl = 'https://www.sankavollerei.com/anime';
-const scraper = new AnimeScraper(); // Initialize scraper ONCE
+const scraper = new AnimeScraper();
 
 // Middleware
 app.use(cors({
@@ -30,13 +31,14 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'OK',
-    message: 'Sukinime API v6.0 - Sankavollerei + Puppeteer Scraper',
+    message: 'Sukinime API - Sankavollerei + Puppeteer Scraper',
     version: '6.0.0',
+    description: 'Hybrid API: Sankavollerei for metadata + Puppeteer for video extraction',
     features: [
-      'Sankavollerei API for metadata',
-      'Puppeteer scraping for streaming links',
-      'Direct MP4/HLS extraction',
-      'Axios fallback when Puppeteer unavailable'
+      'Sankavollerei API for anime data',
+      'Puppeteer scraping for direct video links',
+      'MP4 & HLS stream support',
+      'Multi-quality extraction'
     ],
     routes: {
       home: 'GET /otakudesu/home',
@@ -47,17 +49,18 @@ app.get('/', (req, res) => {
       genres: 'GET /otakudesu/genres',
       genreDetail: 'GET /otakudesu/genres/:slug?page=1',
       animeDetail: 'GET /otakudesu/anime/:slug',
-      episode: 'GET /otakudesu/episode/:slug (WITH PUPPETEER SCRAPING)',
+      episode: 'GET /otakudesu/episode/:slug (⚡ WITH PUPPETEER SCRAPING)',
       search: 'GET /otakudesu/search?q=naruto'
     }
   });
 });
 
 // ============================================
-// HOME
+// HOME - Sankavollerei API
 // ============================================
 app.get('/otakudesu/home', async (req, res) => {
   try {
+    console.log('📡 Fetching home from Sankavollerei...');
     const response = await axios.get(`${sankaBaseUrl}/home`, { timeout: 20000 });
     
     if (response.data && response.data.data) {
@@ -92,10 +95,11 @@ app.get('/otakudesu/home', async (req, res) => {
 });
 
 // ============================================
-// SCHEDULE
+// SCHEDULE - Sankavollerei API
 // ============================================
 app.get('/otakudesu/schedule', async (req, res) => {
   try {
+    console.log('📅 Fetching schedule from Sankavollerei...');
     const response = await axios.get(`${sankaBaseUrl}/schedule`, { timeout: 20000 });
     
     if (response.data && response.data.data) {
@@ -138,13 +142,14 @@ app.get('/otakudesu/schedule', async (req, res) => {
 });
 
 // ============================================
-// ALL ANIME
+// ALL ANIME - Sankavollerei API
 // ============================================
 app.get('/otakudesu/anime', async (req, res) => {
   const { q, page = 1 } = req.query;
   
   try {
     if (q && q.trim().length > 0) {
+      console.log(`🔍 Searching anime: ${q}`);
       const response = await axios.get(`${sankaBaseUrl}/search/${encodeURIComponent(q)}`, { 
         timeout: 20000 
       });
@@ -161,6 +166,7 @@ app.get('/otakudesu/anime', async (req, res) => {
       }
     }
     
+    console.log(`📚 Fetching all anime (page: ${page})`);
     const response = await axios.get(`${sankaBaseUrl}/unlimited`, { 
       timeout: 30000 
     });
@@ -177,14 +183,6 @@ app.get('/otakudesu/anime', async (req, res) => {
           const values = Object.values(allAnime);
           if (values.length > 0 && Array.isArray(values[0])) {
             allAnime = values[0];
-          } else {
-            return res.json({
-              success: true,
-              page: parseInt(page),
-              count: 0,
-              data: [],
-              source: 'sankavollerei'
-            });
           }
         }
       }
@@ -223,12 +221,13 @@ app.get('/otakudesu/anime', async (req, res) => {
 });
 
 // ============================================
-// ONGOING ANIME
+// ONGOING - Sankavollerei API
 // ============================================
 app.get('/otakudesu/ongoing', async (req, res) => {
   const { page = 1 } = req.query;
   
   try {
+    console.log(`📡 Fetching ongoing anime (page: ${page})`);
     const response = await axios.get(`${sankaBaseUrl}/ongoing-anime`, {
       params: { page },
       timeout: 20000
@@ -268,12 +267,13 @@ app.get('/otakudesu/ongoing', async (req, res) => {
 });
 
 // ============================================
-// COMPLETED ANIME
+// COMPLETED - Sankavollerei API
 // ============================================
 app.get('/otakudesu/completed', async (req, res) => {
   const { page = 1 } = req.query;
   
   try {
+    console.log(`📡 Fetching completed anime (page: ${page})`);
     const response = await axios.get(`${sankaBaseUrl}/complete-anime/${page}`, {
       timeout: 20000
     });
@@ -312,10 +312,11 @@ app.get('/otakudesu/completed', async (req, res) => {
 });
 
 // ============================================
-// GENRES LIST
+// GENRES - Sankavollerei API
 // ============================================
 app.get('/otakudesu/genres', async (req, res) => {
   try {
+    console.log('📂 Fetching genres...');
     const response = await axios.get(`${sankaBaseUrl}/genre`, { timeout: 20000 });
     
     if (response.data && response.data.data) {
@@ -351,13 +352,14 @@ app.get('/otakudesu/genres', async (req, res) => {
 });
 
 // ============================================
-// GENRE DETAIL
+// GENRE DETAIL - Sankavollerei API
 // ============================================
 app.get('/otakudesu/genres/:slug', async (req, res) => {
   const { slug } = req.params;
   const { page = 1 } = req.query;
   
   try {
+    console.log(`📂 Fetching genre: ${slug} (page: ${page})`);
     const response = await axios.get(`${sankaBaseUrl}/genre/${slug}`, {
       params: { page },
       timeout: 20000
@@ -399,12 +401,13 @@ app.get('/otakudesu/genres/:slug', async (req, res) => {
 });
 
 // ============================================
-// ANIME DETAIL
+// ANIME DETAIL - Sankavollerei API
 // ============================================
 app.get('/otakudesu/anime/:slug', async (req, res) => {
   const { slug } = req.params;
   
   try {
+    console.log(`📺 Fetching anime detail: ${slug}`);
     const response = await axios.get(`${sankaBaseUrl}/anime/${slug}`, { 
       timeout: 20000 
     });
@@ -440,38 +443,33 @@ app.get('/otakudesu/anime/:slug', async (req, res) => {
 });
 
 // ============================================
-// EPISODE STREAMING LINKS - WITH PUPPETEER SCRAPING 🔥
+// ⚡ EPISODE - WITH PUPPETEER SCRAPING (MAIN FEATURE!)
 // ============================================
 app.get('/otakudesu/episode/:slug', async (req, res) => {
   const { slug } = req.params;
   
   try {
-    console.log(`\n${'='.repeat(70)}`);
-    console.log(`🎬 EPISODE STREAMING REQUEST`);
-    console.log(`📺 Episode: ${slug}`);
-    console.log(`🔥 Method: Puppeteer Web Scraping (Direct to Otakudesu.cloud)`);
-    console.log(`${'='.repeat(70)}`);
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`🎬 EPISODE REQUEST: ${slug}`);
+    console.log(`⚡ Using Puppeteer Scraper for video extraction`);
+    console.log(`${'='.repeat(60)}`);
     
-    // SCRAPE DIRECTLY FROM OTAKUDESU.CLOUD
+    // Use scraper to extract video links
     const streamingLinks = await scraper.getStreamingLink(slug);
     
     if (streamingLinks && streamingLinks.length > 0) {
-      // Transform to match expected format
       const formattedLinks = streamingLinks.map(link => ({
         provider: link.provider,
         url: link.url,
         type: link.type,
-        quality: link.quality || 'auto',
-        source: link.source,
-        serverId: null
+        quality: link.quality,
+        source: link.source
       }));
       
-      console.log(`\n${'='.repeat(70)}`);
-      console.log(`✅ SUCCESS!`);
-      console.log(`📊 Total Links: ${formattedLinks.length}`);
-      console.log(`🎥 MP4: ${formattedLinks.filter(l => l.type === 'mp4').length}`);
-      console.log(`📡 HLS: ${formattedLinks.filter(l => l.type === 'hls').length}`);
-      console.log(`${'='.repeat(70)}\n`);
+      console.log(`\n✅ SUCCESS: ${formattedLinks.length} video links extracted`);
+      console.log(`   MP4: ${formattedLinks.filter(l => l.type === 'mp4').length}`);
+      console.log(`   HLS: ${formattedLinks.filter(l => l.type === 'hls').length}`);
+      console.log(`${'='.repeat(60)}\n`);
       
       return res.json({
         success: true,
@@ -479,43 +477,35 @@ app.get('/otakudesu/episode/:slug', async (req, res) => {
         data: formattedLinks,
         episodeInfo: {
           title: slug,
-          episode: slug
+          episode: slug,
+          anime: null
         },
         source: 'puppeteer-scraper'
       });
     }
     
-    console.log(`\n${'='.repeat(70)}`);
-    console.log(`⚠️ NO STREAMING LINKS FOUND`);
-    console.log(`📺 Episode: ${slug}`);
-    console.log(`💡 Possible reasons:`);
-    console.log(`   - Episode not yet released`);
-    console.log(`   - Invalid episode slug`);
-    console.log(`   - Scraping failed (check logs above)`);
-    console.log(`${'='.repeat(70)}\n`);
+    console.log(`\n⚠️ NO VIDEO LINKS FOUND`);
+    console.log(`${'='.repeat(60)}\n`);
     
     return res.json({
       success: true,
       count: 0,
       data: [],
-      error: 'No streaming links found',
-      source: 'puppeteer-scraper',
-      hint: 'Check if episode exists on Otakudesu.cloud'
+      message: 'No video links found. Episode may not exist or scraper needs update.',
+      source: 'puppeteer-scraper'
     });
   } catch (error) {
-    console.error('\n❌ EPISODE SCRAPING ERROR:');
-    console.error(error);
+    console.error('❌ Error scraping episode:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch streaming links',
-      message: error.message,
-      source: 'puppeteer-scraper'
+      error: 'Failed to scrape episode',
+      message: error.message
     });
   }
 });
 
 // ============================================
-// SEARCH
+// SEARCH - Sankavollerei API
 // ============================================
 app.get('/otakudesu/search', async (req, res) => {
   const { q } = req.query;
@@ -529,6 +519,7 @@ app.get('/otakudesu/search', async (req, res) => {
   }
   
   try {
+    console.log(`🔍 Searching: ${q}`);
     const response = await axios.get(`${sankaBaseUrl}/search/${encodeURIComponent(q)}`, { 
       timeout: 20000 
     });
@@ -583,41 +574,22 @@ app.use((err, req, res, next) => {
 // ============================================
 // CLEANUP ON EXIT
 // ============================================
-async function gracefulShutdown(signal) {
-  console.log(`\n🛑 ${signal} received, shutting down gracefully...`);
-  
-  // Close Puppeteer browser
-  try {
-    await scraper.closeBrowser();
-    console.log('✅ Puppeteer browser closed');
-  } catch (e) {
-    console.error('⚠️ Error closing browser:', e.message);
-  }
-  
-  // Close server
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 SIGTERM received, shutting down...');
+  await scraper.closeBrowser();
   server.close(() => {
     console.log('✅ Server closed');
     process.exit(0);
   });
-  
-  // Force exit after 10 seconds
-  setTimeout(() => {
-    console.error('❌ Forced shutdown after timeout');
-    process.exit(1);
-  }, 10000);
-}
-
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-process.on('uncaughtException', error => {
-  console.error('❌ Uncaught Exception:', error);
-  gracefulShutdown('UNCAUGHT_EXCEPTION');
 });
 
-process.on('unhandledRejection', reason => {
-  console.error('❌ Unhandled Rejection:', reason);
-  gracefulShutdown('UNHANDLED_REJECTION');
+process.on('SIGINT', async () => {
+  console.log('\n🛑 SIGINT received, shutting down...');
+  await scraper.closeBrowser();
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
 });
 
 // ============================================
@@ -626,34 +598,26 @@ process.on('unhandledRejection', reason => {
 const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`
-╔═══════════════════════════════════════════════════════════════════╗
-║                                                                   ║
-║  🎌 SUKINIME API v6.0.0                                          ║
-║  Sankavollerei + Puppeteer Scraper                               ║
-║                                                                   ║
-╠═══════════════════════════════════════════════════════════════════╣
-║                                                                   ║
-║  📡 Port: ${PORT.toString().padEnd(55)} ║
-║  🔗 Metadata: Sankavollerei API                                  ║
-║  🔥 Streaming: Puppeteer Scraper (Otakudesu.cloud)              ║
-║  🌐 Base URL: https://www.sankavollerei.com/anime               ║
-║  🎯 Scraping: https://otakudesu.cloud                            ║
-║                                                                   ║
-╠═══════════════════════════════════════════════════════════════════╣
-║                                                                   ║
-║  ✅ Features:                                                     ║
-║     • Direct MP4/HLS Video Links                                 ║
-║     • Network Request Interception                               ║
-║     • Blogger Video Extraction                                   ║
-║     • Multiple Quality Options                                   ║
-║     • Axios Fallback (when Puppeteer unavailable)                ║
-║                                                                   ║
-╠═══════════════════════════════════════════════════════════════════╣
-║                                                                   ║
-║  🚀 Status: READY FOR PRODUCTION                                 ║
-║  📊 Scraper: INITIALIZED                                         ║
-║  🔧 Mode: Hybrid (Sankavollerei + Puppeteer)                     ║
-║                                                                   ║
-╚═══════════════════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════════════╗
+║  🎌 SUKINIME API v6.0.0 - HYBRID EDITION                  ║
+╠════════════════════════════════════════════════════════════╣
+║  📡 Port: ${PORT.toString().padEnd(48)} ║
+║  🔗 Metadata: Sankavollerei API                           ║
+║  ⚡ Video Scraping: Puppeteer + Axios                     ║
+╠════════════════════════════════════════════════════════════╣
+║  📚 Data Sources:                                         ║
+║     • Home, Schedule, Search → Sankavollerei              ║
+║     • Anime Details, Genres → Sankavollerei               ║
+║     • Episode Video Links → Puppeteer Scraper ⚡          ║
+╠════════════════════════════════════════════════════════════╣
+║  🎯 Features:                                             ║
+║     • Direct MP4/HLS extraction                           ║
+║     • Multi-quality support                               ║
+║     • Blogger video detection                             ║
+║     • Network request interception                        ║
+╠════════════════════════════════════════════════════════════╣
+║  🚀 Status: Ready                                         ║
+╚════════════════════════════════════════════════════════════╝
   `);
+  console.log('💡 Visit http://localhost:' + PORT + ' for documentation\n');
 });

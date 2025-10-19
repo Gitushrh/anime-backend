@@ -1,623 +1,662 @@
-// server.js - Hybrid API (Sankavollerei + Puppeteer Scraper for Episodes Only)
-const express = require('express');
+// utils/scraper.js - Puppeteer Video Scraper for Otakudesu
 const axios = require('axios');
-const cors = require('cors');
-const AnimeScraper = require('./utils/scraper');
+const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
 
-const app = express();
-const sankaBaseUrl = 'https://www.sankavollerei.com/anime';
-const scraper = new AnimeScraper();
-
-// Middleware
-app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5000', '*'],
-  credentials: true
-}));
-app.use(express.json());
-
-// Logging
-app.use((req, res, next) => {
-  const start = Date.now();
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`);
-  });
-  next();
-});
-
-// ============================================
-// MAIN ENDPOINT
-// ============================================
-app.get('/', (req, res) => {
-  res.json({
-    status: 'OK',
-    message: 'Sukinime API - Sankavollerei + Puppeteer Scraper',
-    version: '6.0.0',
-    description: 'Hybrid API: Sankavollerei for metadata + Puppeteer for video extraction',
-    features: [
-      'Sankavollerei API for anime data',
-      'Puppeteer scraping for direct video links',
-      'MP4 & HLS stream support',
-      'Multi-quality extraction'
-    ],
-    routes: {
-      home: 'GET /otakudesu/home',
-      schedule: 'GET /otakudesu/schedule',
-      allAnime: 'GET /otakudesu/anime?page=1&q=naruto',
-      ongoing: 'GET /otakudesu/ongoing?page=1',
-      completed: 'GET /otakudesu/completed?page=1',
-      genres: 'GET /otakudesu/genres',
-      genreDetail: 'GET /otakudesu/genres/:slug?page=1',
-      animeDetail: 'GET /otakudesu/anime/:slug',
-      episode: 'GET /otakudesu/episode/:slug (⚡ WITH PUPPETEER SCRAPING)',
-      search: 'GET /otakudesu/search?q=naruto'
-    }
-  });
-});
-
-// ============================================
-// HOME - Sankavollerei API
-// ============================================
-app.get('/otakudesu/home', async (req, res) => {
-  try {
-    console.log('📡 Fetching home from Sankavollerei...');
-    const response = await axios.get(`${sankaBaseUrl}/home`, { timeout: 20000 });
-    
-    if (response.data && response.data.data) {
-      const data = response.data.data;
-      const homeList = [];
-      
-      if (data.ongoing) homeList.push(...data.ongoing);
-      if (data.complete) homeList.push(...data.complete);
-      
-      return res.json({
-        success: true,
-        count: homeList.length,
-        data: homeList,
-        source: 'sankavollerei'
-      });
-    }
-    
-    return res.json({
-      success: true,
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching home:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch home',
-      message: error.message
+class AnimeScraper {
+  constructor() {
+    this.baseUrl = 'https://otakudesu.cloud';
+    this.browser = null;
+    this.requestCount = 0;
+    this.api = axios.create({
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Referer': 'https://otakudesu.cloud/'
+      }
     });
   }
-});
 
-// ============================================
-// SCHEDULE - Sankavollerei API
-// ============================================
-app.get('/otakudesu/schedule', async (req, res) => {
-  try {
-    console.log('📅 Fetching schedule from Sankavollerei...');
-    const response = await axios.get(`${sankaBaseUrl}/schedule`, { timeout: 20000 });
-    
-    if (response.data && response.data.data) {
-      const rawData = response.data.data;
-      const schedule = {};
-      
-      Object.values(rawData).forEach(dayData => {
-        if (dayData && dayData.day && dayData.anime_list) {
-          const dayName = dayData.day;
-          schedule[dayName] = dayData.anime_list.map(anime => ({
-            id: anime.slug,
-            title: anime.anime_name || anime.title,
-            poster: anime.poster,
-            animeId: anime.slug,
-            url: anime.url
-          }));
+  async delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async fetchWithRetry(url, options = {}, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        this.requestCount++;
+        
+        if (this.requestCount % 3 === 0) {
+          await this.delay(500);
         }
-      });
-      
-      return res.json({
-        success: true,
-        data: schedule,
-        source: 'sankavollerei'
-      });
+        
+        const response = await this.api.get(url, options);
+        return response;
+      } catch (error) {
+        console.log(`⚠️ Retry ${i + 1}/${retries}: ${error.message}`);
+        
+        if (i === retries - 1) throw error;
+        
+        await this.delay(Math.pow(2, i) * 1000);
+      }
     }
-    
-    return res.json({
-      success: true,
-      data: {},
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching schedule:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch schedule',
-      message: error.message
-    });
   }
-});
 
-// ============================================
-// ALL ANIME - Sankavollerei API
-// ============================================
-app.get('/otakudesu/anime', async (req, res) => {
-  const { q, page = 1 } = req.query;
-  
-  try {
-    if (q && q.trim().length > 0) {
-      console.log(`🔍 Searching anime: ${q}`);
-      const response = await axios.get(`${sankaBaseUrl}/search/${encodeURIComponent(q)}`, { 
-        timeout: 20000 
-      });
+  async initBrowser() {
+    if (!this.browser) {
+      console.log('🚀 Launching Puppeteer browser...');
       
-      if (response.data && response.data.data) {
-        return res.json({
-          success: true,
-          query: q,
-          page: parseInt(page),
-          count: response.data.data.length,
-          data: response.data.data,
-          source: 'sankavollerei'
+      const possiblePaths = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/snap/bin/chromium',
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+      ];
+
+      let executablePath = null;
+      const fs = require('fs');
+      
+      for (const path of possiblePaths) {
+        if (path && fs.existsSync(path)) {
+          executablePath = path;
+          console.log(`✅ Found browser at: ${path}`);
+          break;
+        }
+      }
+
+      const launchOptions = {
+        headless: 'new',
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--no-zygote',
+          '--disable-web-security',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--window-size=1920,1080',
+          '--disable-blink-features=AutomationControlled'
+        ]
+      };
+
+      if (executablePath) {
+        launchOptions.executablePath = executablePath;
+      } else {
+        console.log('⚠️ No Chrome found, using Puppeteer bundled browser');
+      }
+
+      this.browser = await puppeteer.launch(launchOptions);
+      console.log('✅ Browser launched successfully');
+    }
+    return this.browser;
+  }
+
+  async closeBrowser() {
+    if (this.browser) {
+      try {
+        await this.browser.close();
+        this.browser = null;
+        console.log('🔒 Browser closed');
+      } catch (e) {
+        console.error('Error closing browser:', e.message);
+      }
+    }
+  }
+
+  async fetchHTML(url) {
+    try {
+      const response = await this.api.get(url);
+      return cheerio.load(response.data);
+    } catch (error) {
+      console.error(`Error fetching ${url}:`, error.message);
+      throw error;
+    }
+  }
+
+  generateSlug(url) {
+    if (!url) return '';
+    const parts = url.split('/').filter(p => p);
+    return parts[parts.length - 1] || '';
+  }
+
+  isVideoEmbedUrl(url) {
+    const videoProviders = [
+      'blogger.com/video',
+      'blogspot.com',
+      'googlevideo.com',
+      'desustream.info',
+      'desustream.com',
+      'streamtape.com',
+      'mp4upload.com',
+      'acefile.co',
+      'filelions.com',
+      'vidguard.to',
+      'streamwish.to',
+      'wishfast.top'
+    ];
+
+    const skipPatterns = [
+      'safelink',
+      'otakufiles',
+      'racaty',
+      'gdrive',
+      'drive.google',
+      'zippyshare',
+      'mega.nz',
+      'mediafire'
+    ];
+
+    const urlLower = url.toLowerCase();
+    
+    if (skipPatterns.some(pattern => urlLower.includes(pattern))) {
+      return false;
+    }
+
+    return videoProviders.some(provider => urlLower.includes(provider));
+  }
+
+  extractBloggerFromHtml(html) {
+    const qualities = [];
+    
+    // Method 1: streams array
+    const streamsMatch = html.match(/"streams":\s*\[([^\]]+)\]/);
+    if (streamsMatch) {
+      try {
+        const streamsContent = streamsMatch[1];
+        const playUrlMatches = [...streamsContent.matchAll(/"play_url":"([^"]+)"[^}]*"format_note":"([^"]+)"/g)];
+        
+        for (const match of playUrlMatches) {
+          const videoUrl = match[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+          const formatNote = match[2];
+          
+          if (videoUrl.includes('videoplayback')) {
+            qualities.push({ 
+              url: videoUrl, 
+              type: 'mp4', 
+              quality: formatNote,
+              source: 'blogger-streams' 
+            });
+          }
+        }
+      } catch (e) {}
+    }
+
+    // Method 2: progressive_url
+    if (qualities.length === 0) {
+      const progressiveMatch = html.match(/"progressive_url":"([^"]+)"/);
+      if (progressiveMatch) {
+        const videoUrl = progressiveMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+        qualities.push({ 
+          url: videoUrl, 
+          type: 'mp4', 
+          quality: this.extractQualityFromUrl(videoUrl),
+          source: 'blogger-progressive'
         });
       }
     }
-    
-    console.log(`📚 Fetching all anime (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/unlimited`, { 
-      timeout: 30000 
-    });
-    
-    if (response.data && response.data.data) {
-      let allAnime = response.data.data;
+
+    // Method 3: play_url
+    if (qualities.length === 0) {
+      const playUrlMatch = html.match(/"play_url":"([^"]+)"/);
+      if (playUrlMatch) {
+        const videoUrl = playUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+        qualities.push({ 
+          url: videoUrl, 
+          type: 'mp4', 
+          quality: this.extractQualityFromUrl(videoUrl),
+          source: 'blogger-playurl'
+        });
+      }
+    }
+
+    // Remove duplicates
+    const unique = [];
+    const seen = new Set();
+    for (const q of qualities) {
+      if (!seen.has(q.url)) {
+        seen.add(q.url);
+        unique.push(q);
+      }
+    }
+
+    return unique;
+  }
+
+  extractQualityFromUrl(url) {
+    const patterns = [
+      { pattern: /\/(\d{3,4})p?[\/\.]/, label: (m) => `${m[1]}p` },
+      { pattern: /quality[=_](\d{3,4})p?/i, label: (m) => `${m[1]}p` },
+      { pattern: /[_\-](\d{3,4})p[_\-\.]/i, label: (m) => `${m[1]}p` },
+      { pattern: /itag=(\d+)/, label: (m) => this.getQualityFromItag(m[1]) },
+    ];
+
+    for (const { pattern, label } of patterns) {
+      const match = url.match(pattern);
+      if (match) return label(match);
+    }
+
+    return 'auto';
+  }
+
+  getQualityFromItag(itag) {
+    const map = {
+      '18': '360p', '22': '720p', '37': '1080p',
+      '59': '480p', '78': '480p', '136': '720p',
+      '137': '1080p', '299': '1080p 60fps', '298': '720p 60fps',
+    };
+    return map[itag] || 'auto';
+  }
+
+  isValidVideoUrl(url) {
+    const invalid = ['logo', 'icon', 'thumb', 'preview', 'banner', 'ad', 'analytics', '.js', '.css', '.png', '.jpg'];
+    return !invalid.some(pattern => url.toLowerCase().includes(pattern));
+  }
+
+  async extractWithPuppeteer(url, depth = 0) {
+    let page = null;
+    try {
+      if (depth > 2) return null;
+
+      console.log(`${'  '.repeat(depth)}🔥 PUPPETEER: ${url.substring(0, 60)}...`);
       
-      if (!Array.isArray(allAnime)) {
-        if (allAnime.anime && Array.isArray(allAnime.anime)) {
-          allAnime = allAnime.anime;
-        } else if (allAnime.animeList && Array.isArray(allAnime.animeList)) {
-          allAnime = allAnime.animeList;
-        } else {
-          const values = Object.values(allAnime);
-          if (values.length > 0 && Array.isArray(values[0])) {
-            allAnime = values[0];
+      const browser = await this.initBrowser();
+      page = await browser.newPage();
+
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+      await page.setViewport({ width: 1920, height: 1080 });
+      
+      const videoUrls = [];
+      const iframeUrls = [];
+
+      await page.setRequestInterception(true);
+      page.on('request', (req) => {
+        const reqUrl = req.url();
+        
+        if (reqUrl.includes('googlevideo.com') || 
+            reqUrl.includes('videoplayback') ||
+            reqUrl.endsWith('.mp4') || 
+            reqUrl.endsWith('.m3u8')) {
+          console.log(`${'  '.repeat(depth)}📡 ${reqUrl.substring(0, 50)}...`);
+          videoUrls.push(reqUrl);
+        }
+
+        req.continue();
+      });
+
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      const iframes = await page.$$eval('iframe', iframes => 
+        iframes.map(iframe => iframe.src).filter(src => src && src.startsWith('http'))
+      );
+      iframeUrls.push(...iframes);
+
+      const html = await page.content();
+
+      if (videoUrls.length > 0) {
+        const results = videoUrls.map(vUrl => ({
+          url: vUrl,
+          type: vUrl.includes('.m3u8') ? 'hls' : 'mp4',
+          quality: this.extractQualityFromUrl(vUrl),
+          source: 'network-capture'
+        }));
+        console.log(`${'  '.repeat(depth)}✅ Network: ${results.length}`);
+        return results;
+      }
+
+      const bloggerData = this.extractBloggerFromHtml(html);
+      if (bloggerData && bloggerData.length > 0) {
+        console.log(`${'  '.repeat(depth)}✅ Blogger: ${bloggerData.length}`);
+        return bloggerData;
+      }
+
+      for (const iframeUrl of iframeUrls.slice(0, 2)) {
+        if (this.isVideoEmbedUrl(iframeUrl) && iframeUrl !== url) {
+          const result = await this.extractWithPuppeteer(iframeUrl, depth + 1);
+          if (result && result.length > 0) return result;
+        }
+      }
+
+      return null;
+
+    } catch (error) {
+      console.error(`Puppeteer Error:`, error.message);
+      return null;
+    } finally {
+      if (page) {
+        try {
+          await page.close();
+        } catch (e) {}
+      }
+    }
+  }
+
+  async extractWithAxios(url, depth = 0) {
+    try {
+      if (depth > 2) return null;
+
+      console.log(`${'  '.repeat(depth)}⚡ AXIOS: ${url.substring(0, 60)}...`);
+
+      const response = await this.fetchWithRetry(url, {
+        headers: {
+          'Referer': this.baseUrl,
+          'Origin': this.baseUrl
+        },
+        timeout: 25000
+      }, 2);
+
+      const html = response.data;
+      const $ = cheerio.load(html);
+
+      // Blogger extraction
+      const bloggerData = this.extractBloggerFromHtml(html);
+      if (bloggerData && bloggerData.length > 0) {
+        console.log(`${'  '.repeat(depth)}✅ Blogger: ${bloggerData.length}`);
+        return bloggerData;
+      }
+
+      // Find blogger iframes
+      const bloggerUrls = new Set();
+      $('iframe[src]').each((i, el) => {
+        const src = $(el).attr('src');
+        if (src && (src.includes('blogger.com/video') || src.includes('blogspot.com'))) {
+          bloggerUrls.add(src.replace(/&amp;/g, '&'));
+        }
+      });
+
+      for (const bloggerUrl of bloggerUrls) {
+        try {
+          const bloggerResponse = await this.fetchWithRetry(bloggerUrl, {
+            headers: { 'Referer': url },
+            timeout: 15000
+          }, 2);
+          const bloggerResults = this.extractBloggerFromHtml(bloggerResponse.data);
+          if (bloggerResults && bloggerResults.length > 0) {
+            console.log(`${'  '.repeat(depth)}✅ Blogger iframe: ${bloggerResults.length}`);
+            return bloggerResults;
+          }
+        } catch (e) {}
+        await this.delay(300);
+      }
+
+      // Regex patterns
+      const patterns = [
+        /https?:\/\/[^"'\s<>]*googlevideo\.com[^"'\s<>]*videoplayback[^"'\s<>]*/gi,
+        /https?:\/\/[^"'\s<>]+\.mp4(?:[?#][^"'\s<>]*)?/gi,
+        /https?:\/\/[^"'\s<>]+\.m3u8(?:[?#][^"'\s<>]*)?/gi,
+        /"(?:file|url|src|source)":\s*"([^"]+\.(?:mp4|m3u8)[^"]*)"/gi,
+      ];
+
+      for (const pattern of patterns) {
+        const matches = [...html.matchAll(pattern)];
+        for (const match of matches) {
+          let videoUrl = match[1] || match[0];
+          videoUrl = videoUrl.replace(/\\u0026/g, '&').replace(/\\/g, '');
+          
+          if (this.isValidVideoUrl(videoUrl) && videoUrl.startsWith('http')) {
+            const type = videoUrl.includes('.m3u8') ? 'hls' : 'mp4';
+            console.log(`${'  '.repeat(depth)}✅ Regex: ${type}`);
+            return [{ url: videoUrl, type, quality: this.extractQualityFromUrl(videoUrl), source: 'axios-regex' }];
           }
         }
       }
-      
-      const itemsPerPage = 20;
-      const startIndex = (parseInt(page) - 1) * itemsPerPage;
-      const endIndex = startIndex + itemsPerPage;
-      const paginatedData = allAnime.slice(startIndex, endIndex);
-      
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        count: paginatedData.length,
-        total: allAnime.length,
-        hasMore: endIndex < allAnime.length,
-        data: paginatedData,
-        source: 'sankavollerei'
-      });
-    }
-    
-    return res.json({
-      success: true,
-      page: parseInt(page),
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching anime:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch anime',
-      message: error.message
-    });
-  }
-});
 
-// ============================================
-// ONGOING - Sankavollerei API
-// ============================================
-app.get('/otakudesu/ongoing', async (req, res) => {
-  const { page = 1 } = req.query;
-  
-  try {
-    console.log(`📡 Fetching ongoing anime (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/ongoing-anime`, {
-      params: { page },
-      timeout: 20000
-    });
-    
-    if (response.data && response.data.data) {
-      let animeData = response.data.data;
-      
-      if (animeData.ongoingAnimeData && Array.isArray(animeData.ongoingAnimeData)) {
-        animeData = animeData.ongoingAnimeData;
+      // Nested iframes
+      const nestedIframes = [];
+      $('iframe[src]').each((i, el) => {
+        const src = $(el).attr('src');
+        if (src && src.startsWith('http') && src !== url) {
+          nestedIframes.push(src);
+        }
+      });
+
+      for (const nestedUrl of nestedIframes.slice(0, 3)) {
+        if (this.isVideoEmbedUrl(nestedUrl)) {
+          const result = await this.extractWithAxios(nestedUrl, depth + 1);
+          if (result && result.length > 0) return result;
+        }
       }
-      
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        count: Array.isArray(animeData) ? animeData.length : 0,
-        data: Array.isArray(animeData) ? animeData : [],
-        source: 'sankavollerei'
-      });
-    }
-    
-    return res.json({
-      success: true,
-      page: parseInt(page),
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching ongoing:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch ongoing anime',
-      message: error.message
-    });
-  }
-});
 
-// ============================================
-// COMPLETED - Sankavollerei API
-// ============================================
-app.get('/otakudesu/completed', async (req, res) => {
-  const { page = 1 } = req.query;
-  
-  try {
-    console.log(`📡 Fetching completed anime (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/complete-anime/${page}`, {
-      timeout: 20000
-    });
-    
-    if (response.data && response.data.data) {
-      let animeData = response.data.data;
+      return null;
+
+    } catch (error) {
+      console.error(`Axios Error:`, error.message);
+      return null;
+    }
+  }
+
+  async getStreamingLink(episodeId) {
+    try {
+      console.log(`\n🎬 Episode: ${episodeId}`);
       
-      if (animeData.completeAnimeData && Array.isArray(animeData.completeAnimeData)) {
-        animeData = animeData.completeAnimeData;
+      const $ = await this.fetchHTML(`${this.baseUrl}/episode/${episodeId}`);
+      const iframeSources = [];
+
+      // Collect iframe sources
+      $('.mirrorstream ul li a, .mirrorstream a').each((i, el) => {
+        const $el = $(el);
+        const provider = $el.text().trim() || `Mirror ${i + 1}`;
+        const url = $el.attr('href') || $el.attr('data-content');
+        if (url && url.startsWith('http') && this.isVideoEmbedUrl(url)) {
+          iframeSources.push({ provider, url, priority: 1 });
+        }
+      });
+
+      $('.download ul li a').each((i, el) => {
+        const $el = $(el);
+        const url = $el.attr('href');
+        if (url && url.startsWith('http') && this.isVideoEmbedUrl(url)) {
+          const provider = $el.text().trim() || `Download ${i + 1}`;
+          iframeSources.push({ provider, url, priority: 2 });
+        }
+      });
+
+      $('[data-content]').each((i, el) => {
+        const content = $(el).attr('data-content');
+        const provider = $(el).text().trim() || `Data ${i + 1}`;
+        if (content && content.startsWith('http') && this.isVideoEmbedUrl(content)) {
+          iframeSources.push({ provider, url: content, priority: 1 });
+        }
+      });
+
+      // Remove duplicates
+      const uniqueSources = [];
+      const seenUrls = new Set();
+      for (const source of iframeSources) {
+        if (!seenUrls.has(source.url)) {
+          seenUrls.add(source.url);
+          uniqueSources.push(source);
+        }
       }
-      
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        count: Array.isArray(animeData) ? animeData.length : 0,
-        data: Array.isArray(animeData) ? animeData : [],
-        source: 'sankavollerei'
-      });
-    }
-    
-    return res.json({
-      success: true,
-      page: parseInt(page),
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching completed:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch completed anime',
-      message: error.message
-    });
-  }
-});
 
-// ============================================
-// GENRES - Sankavollerei API
-// ============================================
-app.get('/otakudesu/genres', async (req, res) => {
-  try {
-    console.log('📂 Fetching genres...');
-    const response = await axios.get(`${sankaBaseUrl}/genre`, { timeout: 20000 });
-    
-    if (response.data && response.data.data) {
-      const genres = response.data.data.map(g => ({
-        id: g.slug || g.id,
-        name: g.title || g.name,
-        slug: g.slug,
-        url: g.endpoint || ''
-      }));
-      
-      return res.json({
-        success: true,
-        count: genres.length,
-        data: genres,
-        source: 'sankavollerei'
-      });
-    }
-    
-    return res.json({
-      success: true,
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching genres:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch genres',
-      message: error.message
-    });
-  }
-});
+      uniqueSources.sort((a, b) => a.priority - b.priority);
+      console.log(`📡 Sources found: ${uniqueSources.length}`);
 
-// ============================================
-// GENRE DETAIL - Sankavollerei API
-// ============================================
-app.get('/otakudesu/genres/:slug', async (req, res) => {
-  const { slug } = req.params;
-  const { page = 1 } = req.query;
-  
-  try {
-    console.log(`📂 Fetching genre: ${slug} (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/genre/${slug}`, {
-      params: { page },
-      timeout: 20000
-    });
-    
-    if (response.data && response.data.data) {
-      let genreData = response.data.data;
-      
-      if (genreData.anime && Array.isArray(genreData.anime)) {
-        genreData = genreData.anime;
+      const allLinks = [];
+      let puppeteerAvailable = true;
+
+      try {
+        await this.initBrowser();
+      } catch (error) {
+        console.log('⚠️ Puppeteer unavailable, using axios only');
+        puppeteerAvailable = false;
       }
+
+      // Extract from sources (limit 5)
+      for (const source of uniqueSources.slice(0, 5)) {
+        console.log(`\n🔥 ${source.provider}`);
+        
+        let results = null;
+        
+        if (puppeteerAvailable) {
+          try {
+            results = await this.extractWithPuppeteer(source.url);
+          } catch (error) {
+            console.log('⚠️ Puppeteer failed, trying axios');
+            results = await this.extractWithAxios(source.url);
+          }
+        } else {
+          results = await this.extractWithAxios(source.url);
+        }
+        
+        if (results && results.length > 0) {
+          results.forEach(result => {
+            allLinks.push({
+              provider: source.provider,
+              url: result.url,
+              type: result.type,
+              quality: result.quality || 'auto',
+              source: result.source,
+              priority: result.type === 'mp4' ? 1 : 2
+            });
+          });
+        }
+      }
+
+      // Remove duplicates
+      const uniqueLinks = [];
+      const seenVideoUrls = new Set();
+      for (const link of allLinks) {
+        if (!seenVideoUrls.has(link.url)) {
+          seenVideoUrls.add(link.url);
+          uniqueLinks.push(link);
+        }
+      }
+
+      uniqueLinks.sort((a, b) => {
+        if (a.priority !== b.priority) return a.priority - b.priority;
+        const qA = parseInt(a.quality) || 0;
+        const qB = parseInt(b.quality) || 0;
+        return qB - qA;
+      });
+
+      console.log(`\n✅ RESULTS: ${uniqueLinks.length} links`);
+      console.log(`   MP4: ${uniqueLinks.filter(l => l.type === 'mp4').length}`);
+      console.log(`   HLS: ${uniqueLinks.filter(l => l.type === 'hls').length}`);
+
+      return uniqueLinks;
+    } catch (error) {
+      console.error('Scraping error:', error.message);
+      return [];
+    }
+  }
+
+  async getLatestAnime() {
+    try {
+      const $ = await this.fetchHTML(this.baseUrl);
+      const animes = [];
+
+      $('.venz ul li').each((i, el) => {
+        const $el = $(el);
+        const title = $el.find('.jdlflm').text().trim();
+        const poster = $el.find('.thumbz img').attr('src');
+        const url = $el.find('.thumb a').attr('href');
+        const episode = $el.find('.epz').text().trim();
+
+        if (title && url) {
+          animes.push({
+            id: this.generateSlug(url),
+            title,
+            poster: poster || '',
+            url,
+            latestEpisode: episode || 'Unknown',
+            source: 'otakudesu'
+          });
+        }
+      });
+
+      return animes;
+    } catch (error) {
+      console.error('Error latest:', error.message);
+      return [];
+    }
+  }
+
+  async getAnimeDetail(animeId) {
+    try {
+      const $ = await this.fetchHTML(`${this.baseUrl}/anime/${animeId}`);
       
-      return res.json({
-        success: true,
-        genre: slug,
-        page: parseInt(page),
-        count: Array.isArray(genreData) ? genreData.length : 0,
-        data: Array.isArray(genreData) ? genreData : [],
-        source: 'sankavollerei'
-      });
-    }
-    
-    return res.json({
-      success: true,
-      genre: slug,
-      page: parseInt(page),
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching genre detail:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch genre detail',
-      message: error.message
-    });
-  }
-});
-
-// ============================================
-// ANIME DETAIL - Sankavollerei API
-// ============================================
-app.get('/otakudesu/anime/:slug', async (req, res) => {
-  const { slug } = req.params;
-  
-  try {
-    console.log(`📺 Fetching anime detail: ${slug}`);
-    const response = await axios.get(`${sankaBaseUrl}/anime/${slug}`, { 
-      timeout: 20000 
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        data: response.data.data,
-        source: 'sankavollerei'
-      });
-    }
-    
-    return res.status(404).json({
-      success: false,
-      error: 'Anime not found'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching anime detail:', error.message);
-    
-    if (error.response && error.response.status === 404) {
-      return res.status(404).json({
-        success: false,
-        error: 'Anime not found'
-      });
-    }
-    
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch anime detail',
-      message: error.message
-    });
-  }
-});
-
-// ============================================
-// ⚡ EPISODE - WITH PUPPETEER SCRAPING (MAIN FEATURE!)
-// ============================================
-app.get('/otakudesu/episode/:slug', async (req, res) => {
-  const { slug } = req.params;
-  
-  try {
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`🎬 EPISODE REQUEST: ${slug}`);
-    console.log(`⚡ Using Puppeteer Scraper for video extraction`);
-    console.log(`${'='.repeat(60)}`);
-    
-    // Use scraper to extract video links
-    const streamingLinks = await scraper.getStreamingLink(slug);
-    
-    if (streamingLinks && streamingLinks.length > 0) {
-      const formattedLinks = streamingLinks.map(link => ({
-        provider: link.provider,
-        url: link.url,
-        type: link.type,
-        quality: link.quality,
-        source: link.source
-      }));
+      const title = $('.jdlrx h1').text().trim();
+      const poster = $('.fotoanime img').attr('src');
+      const synopsis = $('.sinopc p').text().trim();
       
-      console.log(`\n✅ SUCCESS: ${formattedLinks.length} video links extracted`);
-      console.log(`   MP4: ${formattedLinks.filter(l => l.type === 'mp4').length}`);
-      console.log(`   HLS: ${formattedLinks.filter(l => l.type === 'hls').length}`);
-      console.log(`${'='.repeat(60)}\n`);
-      
-      return res.json({
-        success: true,
-        count: formattedLinks.length,
-        data: formattedLinks,
-        episodeInfo: {
-          title: slug,
-          episode: slug,
-          anime: null
-        },
-        source: 'puppeteer-scraper'
+      const info = {};
+      $('.infozingle p').each((i, el) => {
+        const text = $(el).text();
+        const [key, ...valueParts] = text.split(':');
+        if (key && valueParts.length > 0) {
+          info[key.trim()] = valueParts.join(':').trim();
+        }
       });
-    }
-    
-    console.log(`\n⚠️ NO VIDEO LINKS FOUND`);
-    console.log(`${'='.repeat(60)}\n`);
-    
-    return res.json({
-      success: true,
-      count: 0,
-      data: [],
-      message: 'No video links found. Episode may not exist or scraper needs update.',
-      source: 'puppeteer-scraper'
-    });
-  } catch (error) {
-    console.error('❌ Error scraping episode:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to scrape episode',
-      message: error.message
-    });
-  }
-});
 
-// ============================================
-// SEARCH - Sankavollerei API
-// ============================================
-app.get('/otakudesu/search', async (req, res) => {
-  const { q } = req.query;
-  
-  if (!q || q.trim().length === 0) {
-    return res.status(400).json({
-      success: false,
-      error: 'Query parameter (q) is required',
-      example: '/otakudesu/search?q=naruto'
-    });
-  }
-  
-  try {
-    console.log(`🔍 Searching: ${q}`);
-    const response = await axios.get(`${sankaBaseUrl}/search/${encodeURIComponent(q)}`, { 
-      timeout: 20000 
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        query: q,
-        count: response.data.data.length,
-        data: response.data.data,
-        source: 'sankavollerei'
+      const episodes = [];
+      $('.episodelist ul li').each((i, el) => {
+        const $el = $(el);
+        const episodeTitle = $el.find('span a').text().trim();
+        const episodeUrl = $el.find('span a').attr('href');
+        const date = $el.find('.zeebr').text().trim();
+
+        if (episodeUrl) {
+          episodes.push({
+            number: episodeTitle,
+            date,
+            url: this.generateSlug(episodeUrl)
+          });
+        }
       });
+
+      return {
+        id: animeId,
+        title,
+        poster: poster || '',
+        synopsis: synopsis || 'No synopsis',
+        episodes,
+        info,
+        source: 'otakudesu'
+      };
+    } catch (error) {
+      console.error('Error detail:', error.message);
+      return null;
     }
-    
-    return res.json({
-      success: true,
-      query: q,
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error searching:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to search',
-      message: error.message
-    });
   }
-});
 
-// ============================================
-// ERROR HANDLING
-// ============================================
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Endpoint not found',
-    hint: 'Visit / for API documentation'
-  });
-});
+  async searchAnime(query) {
+    try {
+      const $ = await this.fetchHTML(`${this.baseUrl}/?s=${encodeURIComponent(query)}&post_type=anime`);
+      const results = [];
 
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({
-    success: false,
-    error: 'Internal server error',
-    message: err.message
-  });
-});
+      $('.chivsrc li').each((i, el) => {
+        const $el = $(el);
+        const title = $el.find('h2 a').text().trim();
+        const poster = $el.find('img').attr('src');
+        const url = $el.find('h2 a').attr('href');
 
-// ============================================
-// CLEANUP ON EXIT
-// ============================================
-process.on('SIGTERM', async () => {
-  console.log('\n🛑 SIGTERM received, shutting down...');
-  await scraper.closeBrowser();
-  server.close(() => {
-    console.log('✅ Server closed');
-    process.exit(0);
-  });
-});
+        if (title && url) {
+          results.push({
+            id: this.generateSlug(url),
+            title,
+            poster: poster || '',
+            url,
+            source: 'otakudesu'
+          });
+        }
+      });
 
-process.on('SIGINT', async () => {
-  console.log('\n🛑 SIGINT received, shutting down...');
-  await scraper.closeBrowser();
-  server.close(() => {
-    console.log('✅ Server closed');
-    process.exit(0);
-  });
-});
+      return results;
+    } catch (error) {
+      console.error('Error search:', error.message);
+      return [];
+    }
+  }
+}
 
-// ============================================
-// START SERVER
-// ============================================
-const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════════════════════════════╗
-║  🎌 SUKINIME API v6.0.0 - HYBRID EDITION                  ║
-╠════════════════════════════════════════════════════════════╣
-║  📡 Port: ${PORT.toString().padEnd(48)} ║
-║  🔗 Metadata: Sankavollerei API                           ║
-║  ⚡ Video Scraping: Puppeteer + Axios                     ║
-╠════════════════════════════════════════════════════════════╣
-║  📚 Data Sources:                                         ║
-║     • Home, Schedule, Search → Sankavollerei              ║
-║     • Anime Details, Genres → Sankavollerei               ║
-║     • Episode Video Links → Puppeteer Scraper ⚡          ║
-╠════════════════════════════════════════════════════════════╣
-║  🎯 Features:                                             ║
-║     • Direct MP4/HLS extraction                           ║
-║     • Multi-quality support                               ║
-║     • Blogger video detection                             ║
-║     • Network request interception                        ║
-╠════════════════════════════════════════════════════════════╣
-║  🚀 Status: Ready                                         ║
-╚════════════════════════════════════════════════════════════╝
-  `);
-  console.log('💡 Visit http://localhost:' + PORT + ' for documentation\n');
-});
+module.exports = AnimeScraper;
