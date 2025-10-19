@@ -10,15 +10,14 @@ RUN npm ci --production && npm cache clean --force
 # Production stage
 FROM node:20-alpine
 
-# Install minimal chromium runtime libs only
+# Install minimal chromium runtime libs only (Alpine packages)
 RUN apk add --no-cache \
     chromium \
     nss \
     freetype \
     harfbuzz \
     ca-certificates \
-    ttf-freefont \
-    libxss1
+    ttf-freefont
 
 # Critical: Tell Puppeteer to use system Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
