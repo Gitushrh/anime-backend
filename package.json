@@ -1,7 +1,7 @@
 {
   "name": "sukinime_backend",
-  "version": "6.0.0",
-  "description": "Sukinime Backend - Sankavollerei API + Puppeteer Web Scraper for Direct Video Links",
+  "version": "6.1.0",
+  "description": "Sukinime Backend - Anime Scraper + Puppeteer Integration for Direct Video Links",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -38,7 +38,15 @@
     "npm": ">=10.x"
   },
   "puppeteer": {
-    "skipDownload": false
+    "args": [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--no-zygote"
+    ],
+    "executablePath": "/usr/bin/chromium-browser",
+    "skipDownload": true
   },
   "overrides": {
     "undici": "5.28.4"
