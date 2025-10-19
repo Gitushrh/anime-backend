@@ -214,7 +214,12 @@ class AnimeScraper {
   }
 
   isValidVideoUrl(url) {
-    const invalid = ['logo', 'icon', 'thumb', 'preview', 'banner', 'ad', '.js', '.css', '.png', '.jpg'];
+    const invalid = [
+      'logo', 'icon', 'thumb', 'preview', 'banner', 'ad',
+      '.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.webp',
+      'index.php', 'index.html', '404.jpg', '404.png',
+      'player.php', 'embed.php', 'iframe.php'
+    ];
     return !invalid.some(pattern => url.toLowerCase().includes(pattern));
   }
 
