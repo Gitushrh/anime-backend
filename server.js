@@ -1,4 +1,4 @@
-// server.js - UPDATE: Add timeout handling only
+// server.js - COMPLETE FIXED VERSION v6.2.0
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -8,21 +8,23 @@ const app = express();
 const sankaBaseUrl = 'https://www.sankavollerei.com/anime';
 const scraper = new AnimeScraper();
 
-// Middleware
+// ============================================
+// MIDDLEWARE
+// ============================================
 app.use(cors({
   origin: ['http://localhost:3000', 'http://localhost:5000', '*'],
   credentials: true
 }));
 app.use(express.json());
 
-// 🔥 NEW: Increase server timeout
+// Timeout configuration
 app.use((req, res, next) => {
-  req.setTimeout(45000); // 45 seconds
+  req.setTimeout(45000);
   res.setTimeout(45000);
   next();
 });
 
-// Logging
+// Logging middleware
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
@@ -33,32 +35,33 @@ app.use((req, res, next) => {
 });
 
 // ============================================
-// MAIN ENDPOINT
+// ROOT ENDPOINT
 // ============================================
 app.get('/', (req, res) => {
   res.json({
     status: 'OK',
-    message: 'Sukinime API - Sankavollerei + Puppeteer Scraper',
-    version: '6.1.0',
+    message: 'Sukinime API - Fixed Search Endpoint',
+    version: '6.2.0',
     description: 'Hybrid API: Sankavollerei for metadata + Puppeteer for video extraction',
     features: [
       'Sankavollerei API for anime data',
-      'Optimized Puppeteer scraping (parallel extraction)',
+      'Fixed search endpoint with proper response parsing',
+      'Optimized Puppeteer scraping',
       'MP4 & HLS stream support',
-      'Multi-quality extraction',
       '45s timeout protection'
     ],
     routes: {
       home: 'GET /otakudesu/home',
       schedule: 'GET /otakudesu/schedule',
-      allAnime: 'GET /otakudesu/anime?page=1&q=naruto',
+      allAnime: 'GET /otakudesu/anime?page=1',
+      search: 'GET /otakudesu/search?q=jujutsu',
       ongoing: 'GET /otakudesu/ongoing?page=1',
       completed: 'GET /otakudesu/completed?page=1',
       genres: 'GET /otakudesu/genres',
       genreDetail: 'GET /otakudesu/genres/:slug?page=1',
       animeDetail: 'GET /otakudesu/anime/:slug',
-      episode: 'GET /otakudesu/episode/:slug (⚡ OPTIMIZED)',
-      search: 'GET /otakudesu/search?q=naruto'
+      episode: 'GET /otakudesu/episode/:slug',
+      debugSearch: 'GET /otakudesu/debug/search/:query'
     }
   });
 });
@@ -150,30 +153,123 @@ app.get('/otakudesu/schedule', async (req, res) => {
 });
 
 // ============================================
+// 🔥 FIXED: SEARCH - Sankavollerei API
+// ============================================
+app.get('/otakudesu/search', async (req, res) => {
+  const { q } = req.query;
+  
+  if (!q || q.trim().length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Query parameter (q) is required',
+      example: '/otakudesu/search?q=jujutsu'
+    });
+  }
+  
+  try {
+    const trimmedQuery = q.trim();
+    console.log(`🔍 Searching: ${trimmedQuery}`);
+    
+    const searchUrl = `${sankaBaseUrl}/search/${encodeURIComponent(trimmedQuery)}`;
+    console.log(`📡 Calling: ${searchUrl}`);
+    
+    const response = await axios.get(searchUrl, { 
+      timeout: 20000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json, text/html'
+      }
+    });
+    
+    console.log(`✅ Response status: ${response.status}`);
+    
+    // Parse response - handle multiple formats
+    let searchResults = [];
+    
+    if (response.data) {
+      // Try different response formats from Sankavollerei
+      if (response.data.search_results && Array.isArray(response.data.search_results)) {
+        searchResults = response.data.search_results;
+      } else if (response.data.data && Array.isArray(response.data.data)) {
+        searchResults = response.data.data;
+      } else if (Array.isArray(response.data)) {
+        searchResults = response.data;
+      } else if (response.data.status === 'success' && response.data.search_results) {
+        searchResults = response.data.search_results;
+      }
+      
+      console.log(`✅ Found ${searchResults.length} results`);
+      
+      return res.json({
+        success: true,
+        query: trimmedQuery,
+        count: searchResults.length,
+        data: searchResults,
+        source: 'sankavollerei'
+      });
+    }
+    
+    console.log('⚠️ No data in response');
+    return res.json({
+      success: true,
+      query: trimmedQuery,
+      count: 0,
+      data: [],
+      source: 'sankavollerei'
+    });
+  } catch (error) {
+    console.error('❌ Error searching:', error.message);
+    if (error.response) {
+      console.error('❌ Response status:', error.response.status);
+      console.error('❌ Response data:', JSON.stringify(error.response.data).substring(0, 500));
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Failed to search',
+      message: error.message,
+      query: q
+    });
+  }
+});
+
+// ============================================
 // ALL ANIME - Sankavollerei API
 // ============================================
 app.get('/otakudesu/anime', async (req, res) => {
   const { q, page = 1 } = req.query;
   
   try {
+    // If search query provided, redirect to search
     if (q && q.trim().length > 0) {
-      console.log(`🔍 Searching anime: ${q}`);
-      const response = await axios.get(`${sankaBaseUrl}/search/${encodeURIComponent(q)}`, { 
-        timeout: 20000 
-      });
+      console.log(`🔍 Search query detected, using search endpoint: ${q}`);
+      const trimmedQuery = q.trim();
       
-      if (response.data && response.data.data) {
-        return res.json({
-          success: true,
-          query: q,
-          page: parseInt(page),
-          count: response.data.data.length,
-          data: response.data.data,
-          source: 'sankavollerei'
-        });
+      const searchUrl = `${sankaBaseUrl}/search/${encodeURIComponent(trimmedQuery)}`;
+      const response = await axios.get(searchUrl, { timeout: 20000 });
+      
+      let searchResults = [];
+      if (response.data) {
+        if (response.data.search_results && Array.isArray(response.data.search_results)) {
+          searchResults = response.data.search_results;
+        } else if (response.data.data && Array.isArray(response.data.data)) {
+          searchResults = response.data.data;
+        } else if (Array.isArray(response.data)) {
+          searchResults = response.data;
+        }
       }
+      
+      return res.json({
+        success: true,
+        query: trimmedQuery,
+        page: parseInt(page),
+        count: searchResults.length,
+        data: searchResults,
+        source: 'sankavollerei-search'
+      });
     }
     
+    // Otherwise fetch all anime
     console.log(`📚 Fetching all anime (page: ${page})`);
     const response = await axios.get(`${sankaBaseUrl}/unlimited`, { 
       timeout: 30000 
@@ -182,6 +278,7 @@ app.get('/otakudesu/anime', async (req, res) => {
     if (response.data && response.data.data) {
       let allAnime = response.data.data;
       
+      // Handle different data structures
       if (!Array.isArray(allAnime)) {
         if (allAnime.anime && Array.isArray(allAnime.anime)) {
           allAnime = allAnime.anime;
@@ -195,6 +292,7 @@ app.get('/otakudesu/anime', async (req, res) => {
         }
       }
       
+      // Pagination
       const itemsPerPage = 20;
       const startIndex = (parseInt(page) - 1) * itemsPerPage;
       const endIndex = startIndex + itemsPerPage;
@@ -451,24 +549,22 @@ app.get('/otakudesu/anime/:slug', async (req, res) => {
 });
 
 // ============================================
-// ⚡ EPISODE - OPTIMIZED WITH TIMEOUT PROTECTION
+// EPISODE - Optimized with timeout protection
 // ============================================
 app.get('/otakudesu/episode/:slug', async (req, res) => {
   const { slug } = req.params;
   
   try {
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`⚡ OPTIMIZED EPISODE REQUEST: ${slug}`);
+    console.log(`⚡ EPISODE REQUEST: ${slug}`);
     console.log(`${'='.repeat(60)}`);
     
-    // 🔥 NEW: Race condition with timeout
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('Scraping timeout after 38s')), 38000);
     });
     
     const scrapingPromise = scraper.getStreamingLink(slug);
     
-    // Race between scraping and timeout
     const streamingLinks = await Promise.race([
       scrapingPromise,
       timeoutPromise
@@ -483,7 +579,7 @@ app.get('/otakudesu/episode/:slug', async (req, res) => {
         source: link.source
       }));
       
-      console.log(`\n✅ SUCCESS: ${formattedLinks.length} video links extracted`);
+      console.log(`\n✅ SUCCESS: ${formattedLinks.length} video links`);
       console.log(`   MP4: ${formattedLinks.filter(l => l.type === 'mp4').length}`);
       console.log(`   HLS: ${formattedLinks.filter(l => l.type === 'hls').length}`);
       console.log(`${'='.repeat(60)}\n`);
@@ -492,11 +588,6 @@ app.get('/otakudesu/episode/:slug', async (req, res) => {
         success: true,
         count: formattedLinks.length,
         data: formattedLinks,
-        episodeInfo: {
-          title: slug,
-          episode: slug,
-          anime: null
-        },
         source: 'optimized-scraper'
       });
     }
@@ -508,20 +599,18 @@ app.get('/otakudesu/episode/:slug', async (req, res) => {
       success: true,
       count: 0,
       data: [],
-      message: 'No video links found. Episode may not exist or scraper needs update.',
+      message: 'No video links found',
       source: 'optimized-scraper'
     });
   } catch (error) {
     console.error('❌ Error scraping episode:', error.message);
     
-    // Handle timeout gracefully
     if (error.message.includes('timeout')) {
       return res.json({
         success: false,
         error: 'Scraping timeout',
-        message: 'Episode scraping took too long. Please try again.',
-        data: [],
-        tip: 'Some episodes have complex protection that takes longer to bypass.'
+        message: 'Episode scraping took too long',
+        data: []
       });
     }
     
@@ -535,151 +624,39 @@ app.get('/otakudesu/episode/:slug', async (req, res) => {
 });
 
 // ============================================
-// SEARCH - Sankavollerei API
+// DEBUG ENDPOINT - Test Sankavollerei directly
 // ============================================
-app.get('/otakudesu/search', async (req, res) => {
-  const { q } = req.query;
-  
-  if (!q || q.trim().length === 0) {
-    return res.status(400).json({
-      success: false,
-      error: 'Query parameter (q) is required',
-      example: '/otakudesu/search?q=naruto'
-    });
-  }
+app.get('/otakudesu/debug/search/:query', async (req, res) => {
+  const { query } = req.params;
   
   try {
-    console.log(`🔍 Searching: ${q}`);
-    const response = await axios.get(`${sankaBaseUrl}/search/${encodeURIComponent(q)}`, { 
-      timeout: 20000 
-    });
+    console.log(`🔍 DEBUG: Testing search for: ${query}`);
     
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        query: q,
-        count: response.data.data.length,
-        data: response.data.data,
-        source: 'sankavollerei'
-      });
-    }
+    const searchUrl = `${sankaBaseUrl}/search/${encodeURIComponent(query)}`;
+    console.log(`📡 URL: ${searchUrl}`);
     
-    return res.json({
-      success: true,
-      query: q,
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error searching:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to search',
-      message: error.message
-    });
-  }
-});
-
-// ============================================
-// 🔧 DEBUG ENDPOINT - Episode Page Analysis
-// ============================================
-app.get('/otakudesu/debug/episode/:slug', async (req, res) => {
-  const { slug } = req.params;
-  
-  try {
-    console.log(`🔍 DEBUG: Analyzing episode page structure for ${slug}`);
-    const cheerio = require('cheerio');
-    const response = await axios.get(`https://otakudesu.cloud/episode/${slug}`, {
-      timeout: 30000,
+    const response = await axios.get(searchUrl, {
+      timeout: 20000,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
-    const html = response.data;
-    const $ = cheerio.load(html);
-    
-    const debug = {
-      url: `https://otakudesu.cloud/episode/${slug}`,
-      title: $('title').text(),
-      mirrorstream: [],
-      download: [],
-      iframes: [],
-      dataContent: [],
-      allLinks: []
-    };
-    
-    $('.mirrorstream').each((i, el) => {
-      debug.mirrorstream.push({
-        html: $(el).html()?.substring(0, 500),
-        links: []
-      });
-      $(el).find('a').each((j, link) => {
-        debug.mirrorstream[i].links.push({
-          text: $(link).text().trim(),
-          href: $(link).attr('href'),
-          dataContent: $(link).attr('data-content')
-        });
-      });
-    });
-    
-    $('.download').each((i, el) => {
-      debug.download.push({
-        html: $(el).html()?.substring(0, 500),
-        links: []
-      });
-      $(el).find('a').each((j, link) => {
-        debug.download[i].links.push({
-          text: $(link).text().trim(),
-          href: $(link).attr('href')
-        });
-      });
-    });
-    
-    $('iframe[src]').each((i, el) => {
-      debug.iframes.push({
-        src: $(el).attr('src'),
-        id: $(el).attr('id'),
-        class: $(el).attr('class')
-      });
-    });
-    
-    $('[data-content]').each((i, el) => {
-      debug.dataContent.push({
-        text: $(el).text().trim(),
-        content: $(el).attr('data-content'),
-        tag: el.tagName
-      });
-    });
-    
-    $('a[href]').each((i, el) => {
-      const href = $(el).attr('href') || '';
-      if (href.includes('desustream') || 
-          href.includes('blogger') || 
-          href.includes('blogspot') ||
-          href.includes('mp4upload') ||
-          href.includes('streamtape')) {
-        debug.allLinks.push({
-          text: $(el).text().trim(),
-          href: href.substring(0, 200),
-          parent: $(el).parent().attr('class')
-        });
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json'
       }
     });
     
     res.json({
       success: true,
-      data: debug,
-      htmlSample: html.substring(0, 5000)
+      url: searchUrl,
+      status: response.status,
+      dataKeys: Object.keys(response.data),
+      dataType: Array.isArray(response.data) ? 'array' : typeof response.data,
+      sampleData: JSON.stringify(response.data).substring(0, 1000),
+      fullData: response.data
     });
-    
   } catch (error) {
-    console.error('❌ Debug error:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to analyze page',
-      message: error.message
+      error: error.message,
+      response: error.response?.data
     });
   }
 });
@@ -732,22 +709,15 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║  🎌 SUKINIME API v6.1.0 - OPTIMIZED EDITION               ║
+║  🎌 SUKINIME API v6.2.0 - FIXED SEARCH EDITION            ║
 ╠════════════════════════════════════════════════════════════╣
 ║  📡 Port: ${PORT.toString().padEnd(48)} ║
 ║  🔗 Metadata: Sankavollerei API                           ║
-║  ⚡ Video Scraping: Optimized Puppeteer + Axios           ║
+║  ⚡ Video: Optimized Puppeteer + Axios                    ║
 ╠════════════════════════════════════════════════════════════╣
-║  📚 Data Sources:                                         ║
-║     • Home, Schedule, Search → Sankavollerei              ║
-║     • Anime Details, Genres → Sankavollerei               ║
-║     • Episode Video Links → Optimized Scraper ⚡          ║
-╠════════════════════════════════════════════════════════════╣
-║  🎯 Optimizations:                                        ║
-║     • 45s server timeout                                  ║
-║     • 38s scraping timeout with race condition            ║
-║     • Parallel video extraction                           ║
-║     • Graceful timeout handling                           ║
+║  🧪 Test Commands:                                        ║
+║     curl "http://localhost:${PORT}/otakudesu/search?q=jujutsu"    ║
+║     curl "http://localhost:${PORT}/otakudesu/debug/search/jujutsu"║
 ╠════════════════════════════════════════════════════════════╣
 ║  🚀 Status: Ready                                         ║
 ╚════════════════════════════════════════════════════════════╝
