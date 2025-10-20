@@ -723,6 +723,241 @@ process.on('SIGINT', async () => {
   });
 });
 
+// Add this to your server.js
+
+// ============================================
+// 🔥 NEW: GET EPISODE WITH DOWNLOAD LINKS
+// ============================================
+app.get('/otakudesu/episode/:slug/enhanced', async (req, res) => {
+  const { slug } = req.params;
+  
+  try {
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`🎬 ENHANCED EPISODE: ${slug}`);
+    console.log(`${'='.repeat(60)}`);
+    
+    // Fetch episode data from Sankavollerei
+    const sankaUrl = `https://www.sankavollerei.com/anime/samehadaku/episode/${slug}`;
+    console.log(`📡 Fetching from: ${sankaUrl}`);
+    
+    const response = await axios.get(sankaUrl, {
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/json',
+      }
+    });
+    
+    if (response.data && response.data.data) {
+      const episodeData = response.data.data;
+      const streamingLinks = [];
+      
+      // Extract streaming servers (iframe/embed)
+      if (episodeData.server && episodeData.server.qualities) {
+        for (const qualityGroup of episodeData.server.qualities) {
+          const quality = qualityGroup.title || 'unknown';
+          
+          if (qualityGroup.serverList && Array.isArray(qualityGroup.serverList)) {
+            for (const server of qualityGroup.serverList) {
+              if (server.serverId) {
+                // Fetch actual embed URL
+                const serverUrl = `https://www.sankavollerei.com/anime/samehadaku/server/${server.serverId}`;
+                try {
+                  const serverRes = await axios.get(serverUrl, { timeout: 5000 });
+                  if (serverRes.data && serverRes.data.data && serverRes.data.data.url) {
+                    streamingLinks.push({
+                      provider: server.title || 'Unknown',
+                      url: serverRes.data.data.url,
+                      type: 'iframe',
+                      quality: quality,
+                      source: 'streaming-server'
+                    });
+                  }
+                } catch (serverErr) {
+                  console.log(`⚠️ Failed to fetch server ${server.serverId}`);
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // 🔥 NEW: Extract download links as direct streaming sources
+      if (episodeData.downloadUrl && episodeData.downloadUrl.formats) {
+        for (const format of episodeData.downloadUrl.formats) {
+          const formatTitle = format.title || 'Unknown Format';
+          
+          if (format.qualities && Array.isArray(format.qualities)) {
+            for (const qualityGroup of format.qualities) {
+              const quality = qualityGroup.title?.trim() || 'Auto';
+              
+              if (qualityGroup.urls && Array.isArray(qualityGroup.urls)) {
+                for (const urlData of qualityGroup.urls) {
+                  const provider = urlData.title?.trim() || 'Unknown';
+                  const url = urlData.url;
+                  
+                  if (url && url.trim().length > 0) {
+                    // Determine type based on URL
+                    let linkType = 'download';
+                    let isDirectStream = false;
+                    
+                    // Check if it's a direct video link
+                    if (url.includes('.mp4') || 
+                        url.includes('.mkv') || 
+                        url.includes('googlevideo.com') ||
+                        url.includes('filedon.co') ||
+                        url.includes('pixeldrain.com') ||
+                        url.includes('gofile.io')) {
+                      linkType = 'mp4';
+                      isDirectStream = true;
+                    } else if (url.includes('.m3u8')) {
+                      linkType = 'hls';
+                      isDirectStream = true;
+                    }
+                    
+                    // Add to streaming links if it's potentially streamable
+                    if (isDirectStream || 
+                        provider.toLowerCase().includes('pixeldrain') ||
+                        provider.toLowerCase().includes('filedon') ||
+                        provider.toLowerCase().includes('gofile')) {
+                      
+                      streamingLinks.push({
+                        provider: `${provider} (${formatTitle})`,
+                        url: url,
+                        type: linkType,
+                        quality: quality,
+                        source: 'download-link',
+                        format: formatTitle
+                      });
+                      
+                      console.log(`✅ Added download link: ${provider} - ${quality} (${linkType})`);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // Sort by quality (highest first)
+      streamingLinks.sort((a, b) => {
+        const qualityOrder = { '1080p': 4, '720p': 3, '480p': 2, '360p': 1 };
+        const aQuality = qualityOrder[a.quality?.toLowerCase()] || 0;
+        const bQuality = qualityOrder[b.quality?.toLowerCase()] || 0;
+        return bQuality - aQuality;
+      });
+      
+      console.log(`\n✅ FOUND ${streamingLinks.length} total links`);
+      console.log(`   Streaming servers: ${streamingLinks.filter(l => l.source === 'streaming-server').length}`);
+      console.log(`   Download links: ${streamingLinks.filter(l => l.source === 'download-link').length}`);
+      console.log(`${'='.repeat(60)}\n`);
+      
+      return res.json({
+        success: true,
+        count: streamingLinks.length,
+        data: streamingLinks,
+        episodeInfo: {
+          title: episodeData.title,
+          animeId: episodeData.animeId,
+          poster: episodeData.poster,
+        },
+        source: 'sankavollerei-enhanced'
+      });
+    }
+    
+    return res.json({
+      success: true,
+      count: 0,
+      data: [],
+      source: 'sankavollerei-enhanced'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching enhanced episode:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch enhanced episode',
+      message: error.message,
+      data: []
+    });
+  }
+});
+
+// ============================================
+// 🔥 NEW: RESOLVE DIRECT LINK FROM FILE HOSTS
+// ============================================
+app.get('/otakudesu/resolve/:host', async (req, res) => {
+  const { host } = req.params;
+  const { url } = req.query;
+  
+  if (!url) {
+    return res.status(400).json({
+      success: false,
+      error: 'URL parameter required'
+    });
+  }
+  
+  try {
+    console.log(`🔗 Resolving ${host}: ${url}`);
+    
+    let directUrl = null;
+    
+    switch(host.toLowerCase()) {
+      case 'pixeldrain':
+        // Pixeldrain format: https://pixeldrain.com/u/{id}
+        // Direct: https://pixeldrain.com/api/file/{id}
+        const pdMatch = url.match(/pixeldrain\.com\/u\/([a-zA-Z0-9]+)/);
+        if (pdMatch) {
+          directUrl = `https://pixeldrain.com/api/file/${pdMatch[1]}`;
+        }
+        break;
+        
+      case 'filedon':
+        // Filedon might need special handling
+        // For now, return the embed URL
+        const fdMatch = url.match(/filedon\.co\/view\/([a-zA-Z0-9]+)/);
+        if (fdMatch) {
+          directUrl = `https://filedon.co/embed/${fdMatch[1]}`;
+        }
+        break;
+        
+      case 'gofile':
+        // Gofile is tricky, needs token
+        // Return as-is for now
+        directUrl = url;
+        break;
+        
+      default:
+        directUrl = url;
+    }
+    
+    if (directUrl) {
+      console.log(`✅ Resolved: ${directUrl}`);
+      return res.json({
+        success: true,
+        originalUrl: url,
+        directUrl: directUrl,
+        host: host
+      });
+    }
+    
+    return res.json({
+      success: false,
+      error: 'Could not resolve URL',
+      originalUrl: url
+    });
+    
+  } catch (error) {
+    console.error('❌ Error resolving URL:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to resolve URL',
+      message: error.message
+    });
+  }
+});
+
 // ============================================
 // START SERVER
 // ============================================
