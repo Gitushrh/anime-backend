@@ -234,7 +234,7 @@ app.get('/otakudesu/search', async (req, res) => {
 });
 
 // ============================================
-// ALL ANIME - Sankavollerei API
+// ALL ANIME - Sankavollerei API (FIXED for new format)
 // ============================================
 app.get('/otakudesu/anime', async (req, res) => {
   const { q, page = 1 } = req.query;
@@ -275,28 +275,48 @@ app.get('/otakudesu/anime', async (req, res) => {
       timeout: 30000 
     });
     
+    console.log(`✅ Response status: ${response.status}`);
+    
     if (response.data && response.data.data) {
-      let allAnime = response.data.data;
+      let allAnime = [];
+      const data = response.data.data;
       
-      // Handle different data structures
-      if (!Array.isArray(allAnime)) {
-        if (allAnime.anime && Array.isArray(allAnime.anime)) {
-          allAnime = allAnime.anime;
-        } else if (allAnime.animeList && Array.isArray(allAnime.animeList)) {
-          allAnime = allAnime.animeList;
-        } else {
-          const values = Object.values(allAnime);
-          if (values.length > 0 && Array.isArray(values[0])) {
-            allAnime = values[0];
+      console.log(`📊 Data type: ${typeof data}, is Array: ${Array.isArray(data)}`);
+      
+      // 🔥 NEW: Handle grouped A-Z format
+      if (data.list && Array.isArray(data.list)) {
+        console.log('✅ Found grouped A-Z format');
+        data.list.forEach(group => {
+          if (group.animeList && Array.isArray(group.animeList)) {
+            console.log(`   Group "${group.startWith}": ${group.animeList.length} anime`);
+            allAnime.push(...group.animeList);
           }
+        });
+      }
+      // Legacy formats
+      else if (Array.isArray(data)) {
+        allAnime = data;
+      } else if (data.anime && Array.isArray(data.anime)) {
+        allAnime = data.anime;
+      } else if (data.animeList && Array.isArray(data.animeList)) {
+        allAnime = data.animeList;
+      } else {
+        // Try to extract from object values
+        const values = Object.values(data);
+        if (values.length > 0 && Array.isArray(values[0])) {
+          allAnime = values[0];
         }
       }
+      
+      console.log(`✅ Total anime found: ${allAnime.length}`);
       
       // Pagination
       const itemsPerPage = 20;
       const startIndex = (parseInt(page) - 1) * itemsPerPage;
       const endIndex = startIndex + itemsPerPage;
       const paginatedData = allAnime.slice(startIndex, endIndex);
+      
+      console.log(`📄 Page ${page}: ${paginatedData.length} items (${startIndex}-${endIndex})`);
       
       return res.json({
         success: true,
@@ -309,6 +329,7 @@ app.get('/otakudesu/anime', async (req, res) => {
       });
     }
     
+    console.log('⚠️ No data in response');
     return res.json({
       success: true,
       page: parseInt(page),
