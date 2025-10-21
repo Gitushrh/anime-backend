@@ -1,4 +1,4 @@
-// server.js - COMPLETE FIXED VERSION v6.2.0
+// server.js - SAMEHADAKU COMPLETE API v1.0.0
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -12,19 +12,17 @@ const scraper = new AnimeScraper();
 // MIDDLEWARE
 // ============================================
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5000', '*'],
+  origin: '*',
   credentials: true
 }));
 app.use(express.json());
 
-// Timeout configuration
 app.use((req, res, next) => {
-  req.setTimeout(45000);
-  res.setTimeout(45000);
+  req.setTimeout(60000);
+  res.setTimeout(60000);
   next();
 });
 
-// Logging middleware
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
@@ -40,61 +38,59 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'OK',
-    message: 'Sukinime API - Fixed Search Endpoint',
-    version: '6.2.0',
-    description: 'Hybrid API: Sankavollerei for metadata + Puppeteer for video extraction',
+    message: 'Samehadaku Complete API',
+    version: '1.0.0',
+    description: 'Full Samehadaku API with aggressive scraping',
     features: [
-      'Sankavollerei API for anime data',
-      'Fixed search endpoint with proper response parsing',
-      'Optimized Puppeteer scraping',
-      'MP4 & HLS stream support',
-      '45s timeout protection'
+      'All Samehadaku endpoints',
+      'Aggressive HTTPS scraping',
+      'Enhanced video extraction',
+      'Download links support',
+      'Multiple quality options'
     ],
     routes: {
-      home: 'GET /otakudesu/home',
-      schedule: 'GET /otakudesu/schedule',
-      allAnime: 'GET /otakudesu/anime?page=1',
-      search: 'GET /otakudesu/search?q=jujutsu',
-      ongoing: 'GET /otakudesu/ongoing?page=1',
-      completed: 'GET /otakudesu/completed?page=1',
-      genres: 'GET /otakudesu/genres',
-      genreDetail: 'GET /otakudesu/genres/:slug?page=1',
-      animeDetail: 'GET /otakudesu/anime/:slug',
-      episode: 'GET /otakudesu/episode/:slug',
-      debugSearch: 'GET /otakudesu/debug/search/:query'
+      home: 'GET /samehadaku/home',
+      recent: 'GET /samehadaku/recent?page=1',
+      search: 'GET /samehadaku/search?q=naruto&page=1',
+      ongoing: 'GET /samehadaku/ongoing?page=1&order=popular',
+      completed: 'GET /samehadaku/completed?page=1&order=latest',
+      popular: 'GET /samehadaku/popular?page=1',
+      movies: 'GET /samehadaku/movies?page=1&order=update',
+      list: 'GET /samehadaku/list',
+      schedule: 'GET /samehadaku/schedule',
+      genres: 'GET /samehadaku/genres',
+      genreDetail: 'GET /samehadaku/genres/:genreId?page=1',
+      batch: 'GET /samehadaku/batch?page=1',
+      animeDetail: 'GET /samehadaku/anime/:animeId',
+      episode: 'GET /samehadaku/episode/:episodeId',
+      batchDetail: 'GET /samehadaku/batch/:batchId',
+      server: 'GET /samehadaku/server/:serverId'
     }
   });
 });
 
 // ============================================
-// HOME - Sankavollerei API
+// SAMEHADAKU ENDPOINTS
 // ============================================
-app.get('/otakudesu/home', async (req, res) => {
+
+// HOME
+app.get('/samehadaku/home', async (req, res) => {
   try {
-    console.log('📡 Fetching home from Sankavollerei...');
-    const response = await axios.get(`${sankaBaseUrl}/home`, { timeout: 20000 });
+    console.log('🏠 Fetching Samehadaku home...');
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/home`, { 
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
     
     if (response.data && response.data.data) {
-      const data = response.data.data;
-      const homeList = [];
-      
-      if (data.ongoing) homeList.push(...data.ongoing);
-      if (data.complete) homeList.push(...data.complete);
-      
       return res.json({
         success: true,
-        count: homeList.length,
-        data: homeList,
-        source: 'sankavollerei'
+        data: response.data.data,
+        source: 'samehadaku'
       });
     }
     
-    return res.json({
-      success: true,
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
+    return res.json({ success: true, data: {}, source: 'samehadaku' });
   } catch (error) {
     console.error('❌ Error fetching home:', error.message);
     res.status(500).json({
@@ -105,43 +101,269 @@ app.get('/otakudesu/home', async (req, res) => {
   }
 });
 
-// ============================================
-// SCHEDULE - Sankavollerei API
-// ============================================
-app.get('/otakudesu/schedule', async (req, res) => {
+// RECENT
+app.get('/samehadaku/recent', async (req, res) => {
+  const { page = 1 } = req.query;
+  
   try {
-    console.log('📅 Fetching schedule from Sankavollerei...');
-    const response = await axios.get(`${sankaBaseUrl}/schedule`, { timeout: 20000 });
+    console.log(`📺 Fetching recent anime (page: ${page})`);
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/recent`, {
+      params: { page },
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
     
     if (response.data && response.data.data) {
-      const rawData = response.data.data;
-      const schedule = {};
-      
-      Object.values(rawData).forEach(dayData => {
-        if (dayData && dayData.day && dayData.anime_list) {
-          const dayName = dayData.day;
-          schedule[dayName] = dayData.anime_list.map(anime => ({
-            id: anime.slug,
-            title: anime.anime_name || anime.title,
-            poster: anime.poster,
-            animeId: anime.slug,
-            url: anime.url
-          }));
-        }
+      return res.json({
+        success: true,
+        page: parseInt(page),
+        data: response.data.data,
+        source: 'samehadaku'
       });
+    }
+    
+    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
+  } catch (error) {
+    console.error('❌ Error fetching recent:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch recent',
+      message: error.message
+    });
+  }
+});
+
+// SEARCH
+app.get('/samehadaku/search', async (req, res) => {
+  const { q, page = 1 } = req.query;
+  
+  if (!q || q.trim().length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Query parameter (q) is required',
+      example: '/samehadaku/search?q=naruto&page=1'
+    });
+  }
+  
+  try {
+    const trimmedQuery = q.trim();
+    console.log(`🔍 Searching Samehadaku: ${trimmedQuery} (page: ${page})`);
+    
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/search`, {
+      params: { q: trimmedQuery, page },
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
+    
+    if (response.data) {
+      const searchResults = response.data.data || [];
       
       return res.json({
         success: true,
-        data: schedule,
-        source: 'sankavollerei'
+        query: trimmedQuery,
+        page: parseInt(page),
+        count: searchResults.length,
+        data: searchResults,
+        source: 'samehadaku'
       });
     }
     
     return res.json({
       success: true,
-      data: {},
-      source: 'sankavollerei'
+      query: trimmedQuery,
+      page: parseInt(page),
+      count: 0,
+      data: [],
+      source: 'samehadaku'
     });
+  } catch (error) {
+    console.error('❌ Error searching:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to search',
+      message: error.message,
+      query: q
+    });
+  }
+});
+
+// ONGOING
+app.get('/samehadaku/ongoing', async (req, res) => {
+  const { page = 1, order = 'popular' } = req.query;
+  
+  try {
+    console.log(`📡 Fetching ongoing anime (page: ${page}, order: ${order})`);
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/ongoing`, {
+      params: { page, order },
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        page: parseInt(page),
+        order,
+        data: response.data.data,
+        source: 'samehadaku'
+      });
+    }
+    
+    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
+  } catch (error) {
+    console.error('❌ Error fetching ongoing:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch ongoing',
+      message: error.message
+    });
+  }
+});
+
+// COMPLETED
+app.get('/samehadaku/completed', async (req, res) => {
+  const { page = 1, order = 'latest' } = req.query;
+  
+  try {
+    console.log(`📡 Fetching completed anime (page: ${page}, order: ${order})`);
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/completed`, {
+      params: { page, order },
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        page: parseInt(page),
+        order,
+        data: response.data.data,
+        source: 'samehadaku'
+      });
+    }
+    
+    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
+  } catch (error) {
+    console.error('❌ Error fetching completed:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch completed',
+      message: error.message
+    });
+  }
+});
+
+// POPULAR
+app.get('/samehadaku/popular', async (req, res) => {
+  const { page = 1 } = req.query;
+  
+  try {
+    console.log(`🔥 Fetching popular anime (page: ${page})`);
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/popular`, {
+      params: { page },
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        page: parseInt(page),
+        data: response.data.data,
+        source: 'samehadaku'
+      });
+    }
+    
+    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
+  } catch (error) {
+    console.error('❌ Error fetching popular:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch popular',
+      message: error.message
+    });
+  }
+});
+
+// MOVIES
+app.get('/samehadaku/movies', async (req, res) => {
+  const { page = 1, order = 'update' } = req.query;
+  
+  try {
+    console.log(`🎬 Fetching movies (page: ${page}, order: ${order})`);
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/movies`, {
+      params: { page, order },
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        page: parseInt(page),
+        order,
+        data: response.data.data,
+        source: 'samehadaku'
+      });
+    }
+    
+    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
+  } catch (error) {
+    console.error('❌ Error fetching movies:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch movies',
+      message: error.message
+    });
+  }
+});
+
+// LIST (ALL ANIME)
+app.get('/samehadaku/list', async (req, res) => {
+  try {
+    console.log('📚 Fetching anime list...');
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/list`, {
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        data: response.data.data,
+        source: 'samehadaku'
+      });
+    }
+    
+    return res.json({ success: true, data: [], source: 'samehadaku' });
+  } catch (error) {
+    console.error('❌ Error fetching list:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch list',
+      message: error.message
+    });
+  }
+});
+
+// SCHEDULE
+app.get('/samehadaku/schedule', async (req, res) => {
+  try {
+    console.log('📅 Fetching schedule...');
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/schedule`, {
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        data: response.data.data,
+        source: 'samehadaku'
+      });
+    }
+    
+    return res.json({ success: true, data: {}, source: 'samehadaku' });
   } catch (error) {
     console.error('❌ Error fetching schedule:', error.message);
     res.status(500).json({
@@ -152,322 +374,24 @@ app.get('/otakudesu/schedule', async (req, res) => {
   }
 });
 
-// ============================================
-// 🔥 FIXED: SEARCH - Sankavollerei API
-// ============================================
-app.get('/otakudesu/search', async (req, res) => {
-  const { q } = req.query;
-  
-  if (!q || q.trim().length === 0) {
-    return res.status(400).json({
-      success: false,
-      error: 'Query parameter (q) is required',
-      example: '/otakudesu/search?q=jujutsu'
-    });
-  }
-  
-  try {
-    const trimmedQuery = q.trim();
-    console.log(`🔍 Searching: ${trimmedQuery}`);
-    
-    const searchUrl = `${sankaBaseUrl}/search/${encodeURIComponent(trimmedQuery)}`;
-    console.log(`📡 Calling: ${searchUrl}`);
-    
-    const response = await axios.get(searchUrl, { 
-      timeout: 20000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json, text/html'
-      }
-    });
-    
-    console.log(`✅ Response status: ${response.status}`);
-    
-    // Parse response - handle multiple formats
-    let searchResults = [];
-    
-    if (response.data) {
-      // Try different response formats from Sankavollerei
-      if (response.data.search_results && Array.isArray(response.data.search_results)) {
-        searchResults = response.data.search_results;
-      } else if (response.data.data && Array.isArray(response.data.data)) {
-        searchResults = response.data.data;
-      } else if (Array.isArray(response.data)) {
-        searchResults = response.data;
-      } else if (response.data.status === 'success' && response.data.search_results) {
-        searchResults = response.data.search_results;
-      }
-      
-      console.log(`✅ Found ${searchResults.length} results`);
-      
-      return res.json({
-        success: true,
-        query: trimmedQuery,
-        count: searchResults.length,
-        data: searchResults,
-        source: 'sankavollerei'
-      });
-    }
-    
-    console.log('⚠️ No data in response');
-    return res.json({
-      success: true,
-      query: trimmedQuery,
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error searching:', error.message);
-    if (error.response) {
-      console.error('❌ Response status:', error.response.status);
-      console.error('❌ Response data:', JSON.stringify(error.response.data).substring(0, 500));
-    }
-    
-    res.status(500).json({
-      success: false,
-      error: 'Failed to search',
-      message: error.message,
-      query: q
-    });
-  }
-});
-
-// ============================================
-// ALL ANIME - Sankavollerei API (FIXED for new format)
-// ============================================
-app.get('/otakudesu/anime', async (req, res) => {
-  const { q, page = 1 } = req.query;
-  
-  try {
-    // If search query provided, redirect to search
-    if (q && q.trim().length > 0) {
-      console.log(`🔍 Search query detected, using search endpoint: ${q}`);
-      const trimmedQuery = q.trim();
-      
-      const searchUrl = `${sankaBaseUrl}/search/${encodeURIComponent(trimmedQuery)}`;
-      const response = await axios.get(searchUrl, { timeout: 20000 });
-      
-      let searchResults = [];
-      if (response.data) {
-        if (response.data.search_results && Array.isArray(response.data.search_results)) {
-          searchResults = response.data.search_results;
-        } else if (response.data.data && Array.isArray(response.data.data)) {
-          searchResults = response.data.data;
-        } else if (Array.isArray(response.data)) {
-          searchResults = response.data;
-        }
-      }
-      
-      return res.json({
-        success: true,
-        query: trimmedQuery,
-        page: parseInt(page),
-        count: searchResults.length,
-        data: searchResults,
-        source: 'sankavollerei-search'
-      });
-    }
-    
-    // Otherwise fetch all anime
-    console.log(`📚 Fetching all anime (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/unlimited`, { 
-      timeout: 30000 
-    });
-    
-    console.log(`✅ Response status: ${response.status}`);
-    
-    if (response.data && response.data.data) {
-      let allAnime = [];
-      const data = response.data.data;
-      
-      console.log(`📊 Data type: ${typeof data}, is Array: ${Array.isArray(data)}`);
-      
-      // 🔥 NEW: Handle grouped A-Z format
-      if (data.list && Array.isArray(data.list)) {
-        console.log('✅ Found grouped A-Z format');
-        data.list.forEach(group => {
-          if (group.animeList && Array.isArray(group.animeList)) {
-            console.log(`   Group "${group.startWith}": ${group.animeList.length} anime`);
-            allAnime.push(...group.animeList);
-          }
-        });
-      }
-      // Legacy formats
-      else if (Array.isArray(data)) {
-        allAnime = data;
-      } else if (data.anime && Array.isArray(data.anime)) {
-        allAnime = data.anime;
-      } else if (data.animeList && Array.isArray(data.animeList)) {
-        allAnime = data.animeList;
-      } else {
-        // Try to extract from object values
-        const values = Object.values(data);
-        if (values.length > 0 && Array.isArray(values[0])) {
-          allAnime = values[0];
-        }
-      }
-      
-      console.log(`✅ Total anime found: ${allAnime.length}`);
-      
-      // Pagination
-      const itemsPerPage = 20;
-      const startIndex = (parseInt(page) - 1) * itemsPerPage;
-      const endIndex = startIndex + itemsPerPage;
-      const paginatedData = allAnime.slice(startIndex, endIndex);
-      
-      console.log(`📄 Page ${page}: ${paginatedData.length} items (${startIndex}-${endIndex})`);
-      
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        count: paginatedData.length,
-        total: allAnime.length,
-        hasMore: endIndex < allAnime.length,
-        data: paginatedData,
-        source: 'sankavollerei'
-      });
-    }
-    
-    console.log('⚠️ No data in response');
-    return res.json({
-      success: true,
-      page: parseInt(page),
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching anime:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch anime',
-      message: error.message
-    });
-  }
-});
-
-// ============================================
-// ONGOING - Sankavollerei API
-// ============================================
-app.get('/otakudesu/ongoing', async (req, res) => {
-  const { page = 1 } = req.query;
-  
-  try {
-    console.log(`📡 Fetching ongoing anime (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/ongoing-anime`, {
-      params: { page },
-      timeout: 20000
-    });
-    
-    if (response.data && response.data.data) {
-      let animeData = response.data.data;
-      
-      if (animeData.ongoingAnimeData && Array.isArray(animeData.ongoingAnimeData)) {
-        animeData = animeData.ongoingAnimeData;
-      }
-      
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        count: Array.isArray(animeData) ? animeData.length : 0,
-        data: Array.isArray(animeData) ? animeData : [],
-        source: 'sankavollerei'
-      });
-    }
-    
-    return res.json({
-      success: true,
-      page: parseInt(page),
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching ongoing:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch ongoing anime',
-      message: error.message
-    });
-  }
-});
-
-// ============================================
-// COMPLETED - Sankavollerei API
-// ============================================
-app.get('/otakudesu/completed', async (req, res) => {
-  const { page = 1 } = req.query;
-  
-  try {
-    console.log(`📡 Fetching completed anime (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/complete-anime/${page}`, {
-      timeout: 20000
-    });
-    
-    if (response.data && response.data.data) {
-      let animeData = response.data.data;
-      
-      if (animeData.completeAnimeData && Array.isArray(animeData.completeAnimeData)) {
-        animeData = animeData.completeAnimeData;
-      }
-      
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        count: Array.isArray(animeData) ? animeData.length : 0,
-        data: Array.isArray(animeData) ? animeData : [],
-        source: 'sankavollerei'
-      });
-    }
-    
-    return res.json({
-      success: true,
-      page: parseInt(page),
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
-  } catch (error) {
-    console.error('❌ Error fetching completed:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch completed anime',
-      message: error.message
-    });
-  }
-});
-
-// ============================================
-// GENRES - Sankavollerei API
-// ============================================
-app.get('/otakudesu/genres', async (req, res) => {
+// GENRES
+app.get('/samehadaku/genres', async (req, res) => {
   try {
     console.log('📂 Fetching genres...');
-    const response = await axios.get(`${sankaBaseUrl}/genre`, { timeout: 20000 });
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/genres`, {
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
     
     if (response.data && response.data.data) {
-      const genres = response.data.data.map(g => ({
-        id: g.slug || g.id,
-        name: g.title || g.name,
-        slug: g.slug,
-        url: g.endpoint || ''
-      }));
-      
       return res.json({
         success: true,
-        count: genres.length,
-        data: genres,
-        source: 'sankavollerei'
+        data: response.data.data,
+        source: 'samehadaku'
       });
     }
     
-    return res.json({
-      success: true,
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
+    return res.json({ success: true, data: [], source: 'samehadaku' });
   } catch (error) {
     console.error('❌ Error fetching genres:', error.message);
     res.status(500).json({
@@ -478,45 +402,30 @@ app.get('/otakudesu/genres', async (req, res) => {
   }
 });
 
-// ============================================
-// GENRE DETAIL - Sankavollerei API
-// ============================================
-app.get('/otakudesu/genres/:slug', async (req, res) => {
-  const { slug } = req.params;
+// GENRE DETAIL
+app.get('/samehadaku/genres/:genreId', async (req, res) => {
+  const { genreId } = req.params;
   const { page = 1 } = req.query;
   
   try {
-    console.log(`📂 Fetching genre: ${slug} (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/genre/${slug}`, {
+    console.log(`📂 Fetching genre: ${genreId} (page: ${page})`);
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/genres/${genreId}`, {
       params: { page },
-      timeout: 20000
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
     });
     
     if (response.data && response.data.data) {
-      let genreData = response.data.data;
-      
-      if (genreData.anime && Array.isArray(genreData.anime)) {
-        genreData = genreData.anime;
-      }
-      
       return res.json({
         success: true,
-        genre: slug,
+        genre: genreId,
         page: parseInt(page),
-        count: Array.isArray(genreData) ? genreData.length : 0,
-        data: Array.isArray(genreData) ? genreData : [],
-        source: 'sankavollerei'
+        data: response.data.data,
+        source: 'samehadaku'
       });
     }
     
-    return res.json({
-      success: true,
-      genre: slug,
-      page: parseInt(page),
-      count: 0,
-      data: [],
-      source: 'sankavollerei'
-    });
+    return res.json({ success: true, genre: genreId, page: parseInt(page), data: [], source: 'samehadaku' });
   } catch (error) {
     console.error('❌ Error fetching genre detail:', error.message);
     res.status(500).json({
@@ -527,23 +436,54 @@ app.get('/otakudesu/genres/:slug', async (req, res) => {
   }
 });
 
-// ============================================
-// ANIME DETAIL - Sankavollerei API
-// ============================================
-app.get('/otakudesu/anime/:slug', async (req, res) => {
-  const { slug } = req.params;
+// BATCH LIST
+app.get('/samehadaku/batch', async (req, res) => {
+  const { page = 1 } = req.query;
   
   try {
-    console.log(`📺 Fetching anime detail: ${slug}`);
-    const response = await axios.get(`${sankaBaseUrl}/anime/${slug}`, { 
-      timeout: 20000 
+    console.log(`📦 Fetching batch list (page: ${page})`);
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/batch`, {
+      params: { page },
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        page: parseInt(page),
+        data: response.data.data,
+        source: 'samehadaku'
+      });
+    }
+    
+    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
+  } catch (error) {
+    console.error('❌ Error fetching batch:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch batch',
+      message: error.message
+    });
+  }
+});
+
+// ANIME DETAIL
+app.get('/samehadaku/anime/:animeId', async (req, res) => {
+  const { animeId } = req.params;
+  
+  try {
+    console.log(`📺 Fetching anime detail: ${animeId}`);
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/anime/${animeId}`, {
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
     });
     
     if (response.data && response.data.data) {
       return res.json({
         success: true,
         data: response.data.data,
-        source: 'sankavollerei'
+        source: 'samehadaku'
       });
     }
     
@@ -569,115 +509,242 @@ app.get('/otakudesu/anime/:slug', async (req, res) => {
   }
 });
 
-// ============================================
-// EPISODE - Optimized with timeout protection
-// ============================================
-app.get('/otakudesu/episode/:slug', async (req, res) => {
-  const { slug } = req.params;
+// EPISODE WITH AGGRESSIVE SCRAPING
+app.get('/samehadaku/episode/:episodeId', async (req, res) => {
+  const { episodeId } = req.params;
   
   try {
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`⚡ EPISODE REQUEST: ${slug}`);
+    console.log(`🎬 EPISODE REQUEST: ${episodeId}`);
     console.log(`${'='.repeat(60)}`);
     
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Scraping timeout after 38s')), 38000);
+    // Try Sankavollerei first
+    const sankaUrl = `${sankaBaseUrl}/samehadaku/episode/${episodeId}`;
+    console.log(`📡 Fetching from Sankavollerei: ${sankaUrl}`);
+    
+    const response = await axios.get(sankaUrl, {
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
     });
     
-    const scrapingPromise = scraper.getStreamingLink(slug);
-    
-    const streamingLinks = await Promise.race([
-      scrapingPromise,
-      timeoutPromise
-    ]);
-    
-    if (streamingLinks && streamingLinks.length > 0) {
-      const formattedLinks = streamingLinks.map(link => ({
-        provider: link.provider,
-        url: link.url,
-        type: link.type,
-        quality: link.quality,
-        source: link.source
-      }));
+    if (response.data && response.data.data) {
+      const episodeData = response.data.data;
+      const streamingLinks = [];
       
-      console.log(`\n✅ SUCCESS: ${formattedLinks.length} video links`);
-      console.log(`   MP4: ${formattedLinks.filter(l => l.type === 'mp4').length}`);
-      console.log(`   HLS: ${formattedLinks.filter(l => l.type === 'hls').length}`);
+      // Extract streaming servers
+      if (episodeData.server && episodeData.server.qualities) {
+        for (const qualityGroup of episodeData.server.qualities) {
+          const quality = qualityGroup.title || 'unknown';
+          
+          if (qualityGroup.serverList && Array.isArray(qualityGroup.serverList)) {
+            for (const server of qualityGroup.serverList) {
+              if (server.serverId) {
+                try {
+                  const serverUrl = `${sankaBaseUrl}/samehadaku/server/${server.serverId}`;
+                  const serverRes = await axios.get(serverUrl, { 
+                    timeout: 10000,
+                    httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+                  });
+                  
+                  if (serverRes.data && serverRes.data.data && serverRes.data.data.url) {
+                    streamingLinks.push({
+                      provider: server.title || 'Unknown',
+                      url: serverRes.data.data.url,
+                      type: 'iframe',
+                      quality: quality,
+                      source: 'streaming-server'
+                    });
+                  }
+                } catch (serverErr) {
+                  console.log(`⚠️ Failed to fetch server ${server.serverId}`);
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // Extract download links
+      if (episodeData.downloadUrl && episodeData.downloadUrl.formats) {
+        for (const format of episodeData.downloadUrl.formats) {
+          const formatTitle = format.title || 'Unknown Format';
+          
+          if (format.qualities && Array.isArray(format.qualities)) {
+            for (const qualityGroup of format.qualities) {
+              const quality = qualityGroup.title?.trim() || 'Auto';
+              
+              if (qualityGroup.urls && Array.isArray(qualityGroup.urls)) {
+                for (const urlData of qualityGroup.urls) {
+                  const provider = urlData.title?.trim() || 'Unknown';
+                  const url = urlData.url;
+                  
+                  if (url && url.trim().length > 0) {
+                    let linkType = 'download';
+                    let isDirectStream = false;
+                    
+                    if (url.includes('.mp4') || url.includes('.mkv') || 
+                        url.includes('googlevideo.com') || url.includes('filedon.co') ||
+                        url.includes('pixeldrain.com') || url.includes('gofile.io')) {
+                      linkType = 'mp4';
+                      isDirectStream = true;
+                    } else if (url.includes('.m3u8')) {
+                      linkType = 'hls';
+                      isDirectStream = true;
+                    }
+                    
+                    if (isDirectStream || provider.toLowerCase().includes('pixeldrain') ||
+                        provider.toLowerCase().includes('filedon') || provider.toLowerCase().includes('gofile')) {
+                      streamingLinks.push({
+                        provider: `${provider} (${formatTitle})`,
+                        url: url,
+                        type: linkType,
+                        quality: quality,
+                        source: 'download-link',
+                        format: formatTitle
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // If we have links from API, try aggressive scraping for more
+      if (streamingLinks.length > 0) {
+        console.log(`✅ Found ${streamingLinks.length} links from API`);
+        
+        // Try aggressive scraping for additional links
+        try {
+          const scrapedLinks = await scraper.getStreamingLink(episodeId);
+          if (scrapedLinks && scrapedLinks.length > 0) {
+            console.log(`✅ Scraped additional ${scrapedLinks.length} links`);
+            scrapedLinks.forEach(link => {
+              // Avoid duplicates
+              if (!streamingLinks.some(sl => sl.url === link.url)) {
+                streamingLinks.push(link);
+              }
+            });
+          }
+        } catch (scrapeError) {
+          console.log(`⚠️ Scraping failed: ${scrapeError.message}`);
+        }
+      } else {
+        // No API links, rely on aggressive scraping
+        console.log(`⚠️ No API links, using aggressive scraping...`);
+        const scrapedLinks = await scraper.getStreamingLink(episodeId);
+        streamingLinks.push(...(scrapedLinks || []));
+      }
+      
+      // Sort by quality
+      streamingLinks.sort((a, b) => {
+        const qualityOrder = { '1080p': 4, '720p': 3, '480p': 2, '360p': 1 };
+        const aQuality = qualityOrder[a.quality?.toLowerCase()] || 0;
+        const bQuality = qualityOrder[b.quality?.toLowerCase()] || 0;
+        return bQuality - aQuality;
+      });
+      
+      console.log(`\n✅ TOTAL: ${streamingLinks.length} streaming links`);
       console.log(`${'='.repeat(60)}\n`);
       
       return res.json({
         success: true,
-        count: formattedLinks.length,
-        data: formattedLinks,
-        source: 'optimized-scraper'
+        count: streamingLinks.length,
+        data: streamingLinks,
+        episodeInfo: {
+          title: episodeData.title,
+          animeId: episodeData.animeId,
+          poster: episodeData.poster,
+        },
+        source: 'samehadaku-enhanced'
       });
     }
     
-    console.log(`\n⚠️ NO VIDEO LINKS FOUND`);
-    console.log(`${'='.repeat(60)}\n`);
+    // Fallback to pure scraping
+    console.log('⚠️ API failed, using pure scraping...');
+    const scrapedLinks = await scraper.getStreamingLink(episodeId);
     
     return res.json({
       success: true,
-      count: 0,
-      data: [],
-      message: 'No video links found',
-      source: 'optimized-scraper'
+      count: scrapedLinks?.length || 0,
+      data: scrapedLinks || [],
+      source: 'scraper-only'
     });
+    
   } catch (error) {
-    console.error('❌ Error scraping episode:', error.message);
-    
-    if (error.message.includes('timeout')) {
-      return res.json({
-        success: false,
-        error: 'Scraping timeout',
-        message: 'Episode scraping took too long',
-        data: []
-      });
-    }
-    
+    console.error('❌ Error fetching episode:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to scrape episode',
+      error: 'Failed to fetch episode',
       message: error.message,
       data: []
     });
   }
 });
 
-// ============================================
-// DEBUG ENDPOINT - Test Sankavollerei directly
-// ============================================
-app.get('/otakudesu/debug/search/:query', async (req, res) => {
-  const { query } = req.params;
+// BATCH DETAIL
+app.get('/samehadaku/batch/:batchId', async (req, res) => {
+  const { batchId } = req.params;
   
   try {
-    console.log(`🔍 DEBUG: Testing search for: ${query}`);
-    
-    const searchUrl = `${sankaBaseUrl}/search/${encodeURIComponent(query)}`;
-    console.log(`📡 URL: ${searchUrl}`);
-    
-    const response = await axios.get(searchUrl, {
-      timeout: 20000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': 'application/json'
-      }
+    console.log(`📦 Fetching batch detail: ${batchId}`);
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/batch/${batchId}`, {
+      timeout: 30000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
     });
     
-    res.json({
-      success: true,
-      url: searchUrl,
-      status: response.status,
-      dataKeys: Object.keys(response.data),
-      dataType: Array.isArray(response.data) ? 'array' : typeof response.data,
-      sampleData: JSON.stringify(response.data).substring(0, 1000),
-      fullData: response.data
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        data: response.data.data,
+        source: 'samehadaku'
+      });
+    }
+    
+    return res.status(404).json({
+      success: false,
+      error: 'Batch not found'
     });
   } catch (error) {
+    console.error('❌ Error fetching batch detail:', error.message);
     res.status(500).json({
       success: false,
-      error: error.message,
-      response: error.response?.data
+      error: 'Failed to fetch batch detail',
+      message: error.message
+    });
+  }
+});
+
+// SERVER
+app.get('/samehadaku/server/:serverId', async (req, res) => {
+  const { serverId } = req.params;
+  
+  try {
+    console.log(`🔗 Fetching server: ${serverId}`);
+    const response = await axios.get(`${sankaBaseUrl}/samehadaku/server/${serverId}`, {
+      timeout: 15000,
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    });
+    
+    if (response.data && response.data.data) {
+      return res.json({
+        success: true,
+        data: response.data.data,
+        source: 'samehadaku'
+      });
+    }
+    
+    return res.status(404).json({
+      success: false,
+      error: 'Server not found'
+    });
+  } catch (error) {
+    console.error('❌ Error fetching server:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch server',
+      message: error.message
     });
   }
 });
@@ -723,241 +790,6 @@ process.on('SIGINT', async () => {
   });
 });
 
-// Add this to your server.js
-
-// ============================================
-// 🔥 NEW: GET EPISODE WITH DOWNLOAD LINKS
-// ============================================
-app.get('/otakudesu/episode/:slug/enhanced', async (req, res) => {
-  const { slug } = req.params;
-  
-  try {
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`🎬 ENHANCED EPISODE: ${slug}`);
-    console.log(`${'='.repeat(60)}`);
-    
-    // Fetch episode data from Sankavollerei
-    const sankaUrl = `https://www.sankavollerei.com/anime/samehadaku/episode/${slug}`;
-    console.log(`📡 Fetching from: ${sankaUrl}`);
-    
-    const response = await axios.get(sankaUrl, {
-      timeout: 30000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/json',
-      }
-    });
-    
-    if (response.data && response.data.data) {
-      const episodeData = response.data.data;
-      const streamingLinks = [];
-      
-      // Extract streaming servers (iframe/embed)
-      if (episodeData.server && episodeData.server.qualities) {
-        for (const qualityGroup of episodeData.server.qualities) {
-          const quality = qualityGroup.title || 'unknown';
-          
-          if (qualityGroup.serverList && Array.isArray(qualityGroup.serverList)) {
-            for (const server of qualityGroup.serverList) {
-              if (server.serverId) {
-                // Fetch actual embed URL
-                const serverUrl = `https://www.sankavollerei.com/anime/samehadaku/server/${server.serverId}`;
-                try {
-                  const serverRes = await axios.get(serverUrl, { timeout: 5000 });
-                  if (serverRes.data && serverRes.data.data && serverRes.data.data.url) {
-                    streamingLinks.push({
-                      provider: server.title || 'Unknown',
-                      url: serverRes.data.data.url,
-                      type: 'iframe',
-                      quality: quality,
-                      source: 'streaming-server'
-                    });
-                  }
-                } catch (serverErr) {
-                  console.log(`⚠️ Failed to fetch server ${server.serverId}`);
-                }
-              }
-            }
-          }
-        }
-      }
-      
-      // 🔥 NEW: Extract download links as direct streaming sources
-      if (episodeData.downloadUrl && episodeData.downloadUrl.formats) {
-        for (const format of episodeData.downloadUrl.formats) {
-          const formatTitle = format.title || 'Unknown Format';
-          
-          if (format.qualities && Array.isArray(format.qualities)) {
-            for (const qualityGroup of format.qualities) {
-              const quality = qualityGroup.title?.trim() || 'Auto';
-              
-              if (qualityGroup.urls && Array.isArray(qualityGroup.urls)) {
-                for (const urlData of qualityGroup.urls) {
-                  const provider = urlData.title?.trim() || 'Unknown';
-                  const url = urlData.url;
-                  
-                  if (url && url.trim().length > 0) {
-                    // Determine type based on URL
-                    let linkType = 'download';
-                    let isDirectStream = false;
-                    
-                    // Check if it's a direct video link
-                    if (url.includes('.mp4') || 
-                        url.includes('.mkv') || 
-                        url.includes('googlevideo.com') ||
-                        url.includes('filedon.co') ||
-                        url.includes('pixeldrain.com') ||
-                        url.includes('gofile.io')) {
-                      linkType = 'mp4';
-                      isDirectStream = true;
-                    } else if (url.includes('.m3u8')) {
-                      linkType = 'hls';
-                      isDirectStream = true;
-                    }
-                    
-                    // Add to streaming links if it's potentially streamable
-                    if (isDirectStream || 
-                        provider.toLowerCase().includes('pixeldrain') ||
-                        provider.toLowerCase().includes('filedon') ||
-                        provider.toLowerCase().includes('gofile')) {
-                      
-                      streamingLinks.push({
-                        provider: `${provider} (${formatTitle})`,
-                        url: url,
-                        type: linkType,
-                        quality: quality,
-                        source: 'download-link',
-                        format: formatTitle
-                      });
-                      
-                      console.log(`✅ Added download link: ${provider} - ${quality} (${linkType})`);
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-      
-      // Sort by quality (highest first)
-      streamingLinks.sort((a, b) => {
-        const qualityOrder = { '1080p': 4, '720p': 3, '480p': 2, '360p': 1 };
-        const aQuality = qualityOrder[a.quality?.toLowerCase()] || 0;
-        const bQuality = qualityOrder[b.quality?.toLowerCase()] || 0;
-        return bQuality - aQuality;
-      });
-      
-      console.log(`\n✅ FOUND ${streamingLinks.length} total links`);
-      console.log(`   Streaming servers: ${streamingLinks.filter(l => l.source === 'streaming-server').length}`);
-      console.log(`   Download links: ${streamingLinks.filter(l => l.source === 'download-link').length}`);
-      console.log(`${'='.repeat(60)}\n`);
-      
-      return res.json({
-        success: true,
-        count: streamingLinks.length,
-        data: streamingLinks,
-        episodeInfo: {
-          title: episodeData.title,
-          animeId: episodeData.animeId,
-          poster: episodeData.poster,
-        },
-        source: 'sankavollerei-enhanced'
-      });
-    }
-    
-    return res.json({
-      success: true,
-      count: 0,
-      data: [],
-      source: 'sankavollerei-enhanced'
-    });
-    
-  } catch (error) {
-    console.error('❌ Error fetching enhanced episode:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch enhanced episode',
-      message: error.message,
-      data: []
-    });
-  }
-});
-
-// ============================================
-// 🔥 NEW: RESOLVE DIRECT LINK FROM FILE HOSTS
-// ============================================
-app.get('/otakudesu/resolve/:host', async (req, res) => {
-  const { host } = req.params;
-  const { url } = req.query;
-  
-  if (!url) {
-    return res.status(400).json({
-      success: false,
-      error: 'URL parameter required'
-    });
-  }
-  
-  try {
-    console.log(`🔗 Resolving ${host}: ${url}`);
-    
-    let directUrl = null;
-    
-    switch(host.toLowerCase()) {
-      case 'pixeldrain':
-        // Pixeldrain format: https://pixeldrain.com/u/{id}
-        // Direct: https://pixeldrain.com/api/file/{id}
-        const pdMatch = url.match(/pixeldrain\.com\/u\/([a-zA-Z0-9]+)/);
-        if (pdMatch) {
-          directUrl = `https://pixeldrain.com/api/file/${pdMatch[1]}`;
-        }
-        break;
-        
-      case 'filedon':
-        // Filedon might need special handling
-        // For now, return the embed URL
-        const fdMatch = url.match(/filedon\.co\/view\/([a-zA-Z0-9]+)/);
-        if (fdMatch) {
-          directUrl = `https://filedon.co/embed/${fdMatch[1]}`;
-        }
-        break;
-        
-      case 'gofile':
-        // Gofile is tricky, needs token
-        // Return as-is for now
-        directUrl = url;
-        break;
-        
-      default:
-        directUrl = url;
-    }
-    
-    if (directUrl) {
-      console.log(`✅ Resolved: ${directUrl}`);
-      return res.json({
-        success: true,
-        originalUrl: url,
-        directUrl: directUrl,
-        host: host
-      });
-    }
-    
-    return res.json({
-      success: false,
-      error: 'Could not resolve URL',
-      originalUrl: url
-    });
-    
-  } catch (error) {
-    console.error('❌ Error resolving URL:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to resolve URL',
-      message: error.message
-    });
-  }
-});
-
 // ============================================
 // START SERVER
 // ============================================
@@ -965,17 +797,15 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║  🎌 SUKINIME API v6.2.0 - FIXED SEARCH EDITION            ║
+║  🎌 SAMEHADAKU COMPLETE API v1.0.0                        ║
 ╠════════════════════════════════════════════════════════════╣
 ║  📡 Port: ${PORT.toString().padEnd(48)} ║
-║  🔗 Metadata: Sankavollerei API                           ║
-║  ⚡ Video: Optimized Puppeteer + Axios                    ║
+║  🔗 Source: Sankavollerei + Aggressive Scraping           ║
+║  🔒 HTTPS: Enabled (rejectUnauthorized: false)            ║
 ╠════════════════════════════════════════════════════════════╣
-║  🧪 Test Commands:                                        ║
-║     curl "http://localhost:${PORT}/otakudesu/search?q=jujutsu"    ║
-║     curl "http://localhost:${PORT}/otakudesu/debug/search/jujutsu"║
-╠════════════════════════════════════════════════════════════╣
-║  🚀 Status: Ready                                         ║
+║  🚀 All Samehadaku endpoints ready                        ║
+║  ⚡ Aggressive video extraction enabled                   ║
+║  📥 Download links supported                              ║
 ╚════════════════════════════════════════════════════════════╝
   `);
   console.log('💡 Visit http://localhost:' + PORT + ' for documentation\n');
