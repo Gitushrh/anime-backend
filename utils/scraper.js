@@ -1,4 +1,4 @@
-// utils/scraper.js - AGGRESSIVE SAMEHADAKU SCRAPER
+// utils/scraper.js - AGGRESSIVE SAMEHADAKU SCRAPER WITH REDIRECT RESOLVER
 const axios = require('axios');
 const cheerio = require('cheerio');
 const puppeteer = require('puppeteer');
@@ -179,6 +179,95 @@ class AnimeScraper {
     }
 
     return videoProviders.some(provider => urlLower.includes(provider));
+  }
+
+  // 🔥 NEW: RESOLVE REDIRECT URLs (Vercel proxy, Wibufile embed, etc)
+  async resolveRedirectUrl(redirectUrl) {
+    try {
+      console.log(`   🔄 Resolving redirect: ${redirectUrl.substring(0, 60)}...`);
+      
+      const response = await this.fetchWithRetry(redirectUrl, {
+        headers: {
+          'Referer': this.baseUrl,
+          'Accept': 'text/html,*/*'
+        },
+        timeout: 15000,
+        maxRedirects: 10,
+        validateStatus: () => true // Accept any status
+      }, 2);
+
+      const html = response.data;
+      
+      // Pattern 1: Direct video URL in HTML
+      const directPatterns = [
+        /https?:\/\/s\d+\.wibufile\.com\/[^"'\s<>]+\.mp4/gi,
+        /https?:\/\/[^"'\s<>]+googlevideo\.com[^"'\s<>]*/gi,
+        /"file":\s*"([^"]+\.(?:mp4|m3u8)[^"]*)"/gi,
+        /file:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
+        /src=["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
+        /<source[^>]+src=["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
+        /data-src=["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
+      ];
+
+      for (const pattern of directPatterns) {
+        let match;
+        while ((match = pattern.exec(html)) !== null) {
+          const videoUrl = (match[1] || match[0])
+            .replace(/\\/g, '')
+            .replace(/&amp;/g, '&');
+          
+          if (this.isValidVideoUrl(videoUrl) && videoUrl.startsWith('http')) {
+            console.log(`   ✅ Resolved to direct URL: ${videoUrl.substring(0, 60)}...`);
+            return videoUrl;
+          }
+        }
+      }
+      
+      // Pattern 2: Blogger iframe
+      const bloggerMatch = html.match(/<iframe[^>]+src=["']([^"']*blogger\.com\/video[^"']*)/i);
+      if (bloggerMatch) {
+        const bloggerUrl = bloggerMatch[1].replace(/&amp;/g, '&');
+        console.log(`   📺 Found Blogger iframe`);
+        
+        try {
+          const bloggerResponse = await this.fetchWithRetry(bloggerUrl, {
+            headers: { 'Referer': redirectUrl },
+            timeout: 15000
+          }, 2);
+          
+          const bloggerVideos = this.extractBloggerFromHtml(bloggerResponse.data);
+          if (bloggerVideos && bloggerVideos.length > 0) {
+            console.log(`   ✅ Resolved via Blogger: ${bloggerVideos[0].url.substring(0, 60)}...`);
+            return bloggerVideos[0].url;
+          }
+        } catch (e) {
+          console.log(`   ⚠️ Blogger extraction failed`);
+        }
+      }
+      
+      // Pattern 3: JavaScript video URL assignment
+      const jsPatterns = [
+        /videoUrl\s*=\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
+        /player\.src\s*=\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
+      ];
+      
+      for (const pattern of jsPatterns) {
+        let match;
+        while ((match = pattern.exec(html)) !== null) {
+          const videoUrl = match[1].replace(/\\/g, '').replace(/&amp;/g, '&');
+          if (this.isValidVideoUrl(videoUrl) && videoUrl.startsWith('http')) {
+            console.log(`   ✅ Resolved from JS: ${videoUrl.substring(0, 60)}...`);
+            return videoUrl;
+          }
+        }
+      }
+      
+      console.log(`   ⚠️ Could not resolve redirect`);
+      return null;
+    } catch (error) {
+      console.log(`   ❌ Redirect resolve error: ${error.message}`);
+      return null;
+    }
   }
 
   // AGGRESSIVE Blogger extraction
@@ -595,7 +684,7 @@ class AnimeScraper {
     }
   }
 
-  // MAIN AGGRESSIVE SCRAPER
+  // 🔥 MAIN AGGRESSIVE SCRAPER WITH REDIRECT RESOLVER
   async getStreamingLink(episodeId) {
     try {
       console.log(`\n🎬 AGGRESSIVE SCRAPING: ${episodeId}`);
@@ -609,8 +698,19 @@ class AnimeScraper {
         const provider = $el.text().trim() || `Source ${i + 1}`;
         const url = $el.attr('href') || $el.attr('data-content') || $el.attr('src');
         
-        if (url && url.startsWith('http') && this.isVideoEmbedUrl(url)) {
-          iframeSources.push({ provider, url, priority: 1 });
+        if (url && url.startsWith('http')) {
+          // 🔥 Check if it's a redirect/proxy URL
+          const isRedirect = url.includes('vercel.app') || 
+                           url.includes('/proxy') || 
+                           url.includes('api.wibufile.com/embed') ||
+                           url.includes('api.wibufile.com/e/');
+          
+          iframeSources.push({ 
+            provider, 
+            url, 
+            priority: isRedirect ? 2 : 1,
+            needsResolve: isRedirect
+          });
         }
       });
 
@@ -640,20 +740,49 @@ class AnimeScraper {
       for (const source of uniqueSources) {
         console.log(`\n🔥 Extracting: ${source.provider}`);
         
-        let results = null;
+        let resolvedUrl = source.url;
         
-        // Try Axios first (faster)
-        try {
-          results = await this.extractWithAxios(source.url);
-        } catch (e) {
-          console.log('⚠️ Axios failed');
+        // 🔥 STEP 1: Resolve redirects first
+        if (source.needsResolve) {
+          console.log(`   🔄 Needs resolve (redirect/proxy detected)`);
+          const directUrl = await this.resolveRedirectUrl(source.url);
+          if (directUrl) {
+            resolvedUrl = directUrl;
+            console.log(`   ✅ Resolved to: ${directUrl.substring(0, 60)}...`);
+            
+            // If we got a direct video URL, add it immediately
+            if (directUrl.includes('.mp4') || directUrl.includes('.m3u8')) {
+              allLinks.push({
+                provider: source.provider,
+                url: directUrl,
+                type: directUrl.includes('.m3u8') ? 'hls' : 'mp4',
+                quality: this.extractQualityFromUrl(directUrl),
+                source: 'resolved-redirect',
+                priority: 1
+              });
+              continue; // Skip further extraction for this source
+            }
+          } else {
+            console.log(`   ⚠️ Could not resolve, trying extraction anyway`);
+          }
         }
         
-        // Fallback to Puppeteer (more powerful)
+        let results = null;
+        
+        // STEP 2: Try Axios extraction (faster)
+        if (!source.needsResolve || !allLinks.some(l => l.provider === source.provider)) {
+          try {
+            results = await this.extractWithAxios(resolvedUrl);
+          } catch (e) {
+            console.log('⚠️ Axios failed');
+          }
+        }
+        
+        // STEP 3: Fallback to Puppeteer (more powerful)
         if ((!results || results.length === 0) && puppeteerAvailable) {
           try {
             console.log('🔄 Trying Puppeteer...');
-            results = await this.extractWithPuppeteer(source.url);
+            results = await this.extractWithPuppeteer(resolvedUrl);
           } catch (error) {
             console.log('⚠️ Puppeteer failed');
           }
