@@ -547,12 +547,29 @@ app.get('/samehadaku/episode/:episodeId', async (req, res) => {
                   });
                   
                   if (serverRes.data && serverRes.data.data && serverRes.data.data.url) {
+                    let finalUrl = serverRes.data.data.url;
+                    
+                    // 🔥 CHECK IF URL NEEDS RESOLVING
+                    const needsResolve = finalUrl.includes('vercel.app') || 
+                                       finalUrl.includes('/proxy') ||
+                                       finalUrl.includes('api.wibufile.com/embed') ||
+                                       finalUrl.includes('api.wibufile.com/e/');
+                    
+                    if (needsResolve) {
+                      console.log(`   🔄 Resolving redirect for ${server.title}...`);
+                      const resolved = await scraper.resolveRedirectUrl(finalUrl);
+                      if (resolved) {
+                        finalUrl = resolved;
+                        console.log(`   ✅ Resolved to: ${finalUrl.substring(0, 60)}...`);
+                      }
+                    }
+                    
                     streamingLinks.push({
                       provider: server.title || 'Unknown',
-                      url: serverRes.data.data.url,
-                      type: 'iframe',
+                      url: finalUrl,
+                      type: finalUrl.includes('.m3u8') ? 'hls' : finalUrl.includes('.mp4') ? 'mp4' : 'iframe',
                       quality: quality,
-                      source: 'streaming-server'
+                      source: needsResolve ? 'resolved-redirect' : 'streaming-server'
                     });
                   }
                 } catch (serverErr) {
@@ -564,7 +581,7 @@ app.get('/samehadaku/episode/:episodeId', async (req, res) => {
         }
       }
       
-      // Extract download links
+      // Extract download links with redirect resolution
       if (episodeData.downloadUrl && episodeData.downloadUrl.formats) {
         for (const format of episodeData.downloadUrl.formats) {
           const formatTitle = format.title || 'Unknown Format';
@@ -576,15 +593,31 @@ app.get('/samehadaku/episode/:episodeId', async (req, res) => {
               if (qualityGroup.urls && Array.isArray(qualityGroup.urls)) {
                 for (const urlData of qualityGroup.urls) {
                   const provider = urlData.title?.trim() || 'Unknown';
-                  const url = urlData.url;
+                  let url = urlData.url;
                   
                   if (url && url.trim().length > 0) {
+                    // 🔥 CHECK IF URL NEEDS RESOLVING
+                    const needsResolve = url.includes('vercel.app') || 
+                                       url.includes('/proxy') ||
+                                       url.includes('api.wibufile.com/embed') ||
+                                       url.includes('api.wibufile.com/e/');
+                    
+                    if (needsResolve) {
+                      console.log(`   🔄 Resolving download link: ${provider} ${quality}...`);
+                      const resolved = await scraper.resolveRedirectUrl(url);
+                      if (resolved) {
+                        url = resolved;
+                        console.log(`   ✅ Resolved to: ${url.substring(0, 60)}...`);
+                      }
+                    }
+                    
                     let linkType = 'download';
                     let isDirectStream = false;
                     
                     if (url.includes('.mp4') || url.includes('.mkv') || 
                         url.includes('googlevideo.com') || url.includes('filedon.co') ||
-                        url.includes('pixeldrain.com') || url.includes('gofile.io')) {
+                        url.includes('pixeldrain.com') || url.includes('gofile.io') ||
+                        url.includes('wibufile.com')) {
                       linkType = 'mp4';
                       isDirectStream = true;
                     } else if (url.includes('.m3u8')) {
@@ -593,13 +626,15 @@ app.get('/samehadaku/episode/:episodeId', async (req, res) => {
                     }
                     
                     if (isDirectStream || provider.toLowerCase().includes('pixeldrain') ||
-                        provider.toLowerCase().includes('filedon') || provider.toLowerCase().includes('gofile')) {
+                        provider.toLowerCase().includes('filedon') || 
+                        provider.toLowerCase().includes('gofile') ||
+                        provider.toLowerCase().includes('wibufile')) {
                       streamingLinks.push({
                         provider: `${provider} (${formatTitle})`,
                         url: url,
                         type: linkType,
                         quality: quality,
-                        source: 'download-link',
+                        source: needsResolve ? 'resolved-redirect' : 'download-link',
                         format: formatTitle
                       });
                     }
@@ -613,7 +648,7 @@ app.get('/samehadaku/episode/:episodeId', async (req, res) => {
       
       // If we have links from API, try aggressive scraping for more
       if (streamingLinks.length > 0) {
-        console.log(`✅ Found ${streamingLinks.length} links from API`);
+        console.log(`✅ Found ${streamingLinks.length} links from API (with resolving)`);
         
         // Try aggressive scraping for additional links
         try {
@@ -645,8 +680,17 @@ app.get('/samehadaku/episode/:episodeId', async (req, res) => {
         return bQuality - aQuality;
       });
       
-      console.log(`\n✅ TOTAL: ${streamingLinks.length} streaming links`);
+      console.log(`\n✅ TOTAL: ${streamingLinks.length} streaming links (after redirect resolving)`);
       console.log(`${'='.repeat(60)}\n`);
+      
+      // Debug log top 5 links
+      if (streamingLinks.length > 0) {
+        console.log('🎉 TOP 5 RESOLVED LINKS:');
+        streamingLinks.slice(0, 5).forEach((link, i) => {
+          console.log(`   ${i + 1}. ${link.provider} - ${link.quality} (${link.type}) - ${link.source}`);
+          console.log(`      ${link.url.substring(0, 80)}...`);
+        });
+      }
       
       return res.json({
         success: true,
@@ -657,7 +701,7 @@ app.get('/samehadaku/episode/:episodeId', async (req, res) => {
           animeId: episodeData.animeId,
           poster: episodeData.poster,
         },
-        source: 'samehadaku-enhanced'
+        source: 'samehadaku-enhanced-with-redirect-resolver'
       });
     }
     
