@@ -518,6 +518,30 @@ class AnimeScraper {
         console.log(`\n🔥 ${source.provider}`);
         const url = source.url;
         
+        // ❌ SKIP KNOWN HTML PAGES - Don't even try to scrape
+        const htmlPagePatterns = [
+          'mega.nz/embed',          // Mega embed player (HTML)
+          'mega.nz/file',           // Mega file page (HTML)
+          'pixeldrain.com/u/',      // Pixeldrain viewer (HTML)
+          'pixeldrain.com/l/',      // Pixeldrain list (HTML)
+          'filedon.co/embed',       // Filedon embed (HTML)
+          'filedon.co/view',        // Filedon viewer (HTML)
+          'gofile.io/d/',           // Gofile folder (HTML)
+          'drive.google.com/file',  // Google Drive viewer (HTML)
+          'mediafire.com/file',     // Mediafire page (HTML)
+        ];
+        
+        let isHtmlPage = false;
+        for (const pattern of htmlPagePatterns) {
+          if (url.toLowerCase().includes(pattern)) {
+            console.log(`   ❌ SKIP: Known HTML page - ${pattern}`);
+            isHtmlPage = true;
+            break;
+          }
+        }
+        
+        if (isHtmlPage) continue; // Skip this source entirely
+        
         // 🔥 FORCE RESOLVE: Blogger
         if (url.includes('blogger.com/video') || url.includes('blogspot.com')) {
           console.log(`   🎬 Blogger detected - RESOLVING...`);
