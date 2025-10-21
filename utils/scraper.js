@@ -1,8 +1,9 @@
-// utils/scraper.js - COMPLETE: Full Extraction + Blogger Resolution
+// utils/scraper.js - ULTIMATE VERSION with yt-dlp integration
 const axios = require('axios');
 const cheerio = require('cheerio');
 const puppeteer = require('puppeteer');
 const https = require('https');
+const { execSync } = require('child_process');
 
 class AnimeScraper {
   constructor() {
@@ -48,6 +49,114 @@ class AnimeScraper {
         if (i === retries - 1) throw error;
         await this.delay(Math.pow(2, i) * 1000);
       }
+    }
+  }
+
+  // 🔥 YT-DLP RESOLVER - For Mega/Mediafire/Google Drive
+  resolveWithYtDlp(url) {
+    try {
+      console.log(`   🎯 Trying yt-dlp...`);
+      
+      // Check if yt-dlp is installed
+      try {
+        execSync('yt-dlp --version', { stdio: 'ignore' });
+      } catch (e) {
+        console.log(`   ⚠️ yt-dlp not installed, skipping`);
+        return null;
+      }
+      
+      const cmd = `yt-dlp -g --no-check-certificate --socket-timeout 10 "${url}"`;
+      const result = execSync(cmd, { 
+        timeout: 15000,
+        encoding: 'utf8' 
+      }).trim();
+      
+      if (result && result.startsWith('http')) {
+        console.log(`   ✅ yt-dlp resolved!`);
+        return result;
+      }
+      
+      return null;
+    } catch (error) {
+      console.log(`   ⚠️ yt-dlp failed: ${error.message.substring(0, 50)}`);
+      return null;
+    }
+  }
+
+  // 🔥 MEGA RESOLVER - Direct API approach
+  async resolveMegaNz(url) {
+    try {
+      console.log(`   🎯 Trying Mega direct API...`);
+      
+      // Try yt-dlp first
+      const ytdlpResult = this.resolveWithYtDlp(url);
+      if (ytdlpResult) return [{ url: ytdlpResult, type: 'mp4', quality: 'auto', source: 'yt-dlp-mega' }];
+      
+      // Fallback: Try to get file info
+      const fileIdMatch = url.match(/(?:file|embed)\/([a-zA-Z0-9_-]+)(?:#([a-zA-Z0-9_-]+))?/);
+      if (fileIdMatch) {
+        console.log(`   ℹ️ Mega requires decryption key - try yt-dlp or browser`);
+      }
+      
+      return null;
+    } catch (error) {
+      console.log(`   ⚠️ Mega resolver failed`);
+      return null;
+    }
+  }
+
+  // 🔥 MEDIAFIRE RESOLVER
+  async resolveMediafire(url) {
+    try {
+      console.log(`   🎯 Trying Mediafire...`);
+      
+      // Try yt-dlp first
+      const ytdlpResult = this.resolveWithYtDlp(url);
+      if (ytdlpResult) return [{ url: ytdlpResult, type: 'mp4', quality: 'auto', source: 'yt-dlp-mediafire' }];
+      
+      // Fallback: Try direct scraping
+      const response = await this.fetchWithRetry(url, {
+        headers: { 'Referer': 'https://www.mediafire.com/' }
+      }, 2);
+      
+      const $ = cheerio.load(response.data);
+      const downloadLink = $('#downloadButton').attr('href') || 
+                          $('a.input[href*="download"]').attr('href') ||
+                          $('a[aria-label="Download file"]').attr('href');
+      
+      if (downloadLink && downloadLink.startsWith('http')) {
+        console.log(`   ✅ Mediafire direct link found!`);
+        return [{ url: downloadLink, type: 'mp4', quality: 'auto', source: 'mediafire-scrape' }];
+      }
+      
+      return null;
+    } catch (error) {
+      console.log(`   ⚠️ Mediafire resolver failed`);
+      return null;
+    }
+  }
+
+  // 🔥 GOOGLE DRIVE RESOLVER
+  async resolveGoogleDrive(url) {
+    try {
+      console.log(`   🎯 Trying Google Drive...`);
+      
+      // Try yt-dlp first
+      const ytdlpResult = this.resolveWithYtDlp(url);
+      if (ytdlpResult) return [{ url: ytdlpResult, type: 'mp4', quality: 'auto', source: 'yt-dlp-gdrive' }];
+      
+      // Extract file ID
+      const fileIdMatch = url.match(/[-\w]{25,}/);
+      if (!fileIdMatch) return null;
+      
+      const fileId = fileIdMatch[0];
+      const directUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+      
+      console.log(`   ✅ Google Drive direct URL generated`);
+      return [{ url: directUrl, type: 'mp4', quality: 'auto', source: 'gdrive-direct' }];
+    } catch (error) {
+      console.log(`   ⚠️ Google Drive resolver failed`);
+      return null;
     }
   }
 
@@ -473,7 +582,7 @@ class AnimeScraper {
     }
   }
 
-  // 🔥 MAIN SCRAPER
+  // 🔥 MAIN SCRAPER WITH YT-DLP INTEGRATION
   async getStreamingLink(episodeId) {
     try {
       console.log(`\n🎬 EPISODE: ${episodeId}`);
@@ -518,17 +627,68 @@ class AnimeScraper {
         console.log(`\n🔥 ${source.provider}`);
         const url = source.url;
         
-        // ❌ SKIP KNOWN HTML PAGES - Don't even try to scrape
+        // 🔥 SPECIAL HANDLERS FOR MEGA/MEDIAFIRE/GDRIVE
+        if (url.toLowerCase().includes('mega.nz')) {
+          console.log(`   🎯 Mega detected - using special resolver...`);
+          const resolved = await this.resolveMegaNz(url);
+          if (resolved && resolved.length > 0) {
+            resolved.forEach(video => {
+              allLinks.push({
+                provider: source.provider,
+                url: video.url,
+                type: video.type,
+                quality: video.quality || 'auto',
+                source: video.source,
+                priority: 1
+              });
+            });
+            continue;
+          }
+        }
+        
+        if (url.toLowerCase().includes('mediafire.com')) {
+          console.log(`   🎯 Mediafire detected - using special resolver...`);
+          const resolved = await this.resolveMediafire(url);
+          if (resolved && resolved.length > 0) {
+            resolved.forEach(video => {
+              allLinks.push({
+                provider: source.provider,
+                url: video.url,
+                type: video.type,
+                quality: video.quality || 'auto',
+                source: video.source,
+                priority: 1
+              });
+            });
+            continue;
+          }
+        }
+        
+        if (url.toLowerCase().includes('drive.google.com')) {
+          console.log(`   🎯 Google Drive detected - using special resolver...`);
+          const resolved = await this.resolveGoogleDrive(url);
+          if (resolved && resolved.length > 0) {
+            resolved.forEach(video => {
+              allLinks.push({
+                provider: source.provider,
+                url: video.url,
+                type: video.type,
+                quality: video.quality || 'auto',
+                source: video.source,
+                priority: 1
+              });
+            });
+            continue;
+          }
+        }
+        
+        // ❌ SKIP OTHER KNOWN HTML PAGES
         const htmlPagePatterns = [
-          'mega.nz/embed',          // Mega embed player (HTML)
-          'mega.nz/file',           // Mega file page (HTML)
-          'pixeldrain.com/u/',      // Pixeldrain viewer (HTML)
-          'pixeldrain.com/l/',      // Pixeldrain list (HTML)
-          'filedon.co/embed',       // Filedon embed (HTML)
-          'filedon.co/view',        // Filedon viewer (HTML)
-          'gofile.io/d/',           // Gofile folder (HTML)
-          'drive.google.com/file',  // Google Drive viewer (HTML)
-          'mediafire.com/file',     // Mediafire page (HTML)
+          'pixeldrain.com/u/',
+          'pixeldrain.com/l/',
+          'filedon.co/embed',
+          'filedon.co/view',
+          'gofile.io/d/',
         ];
         
         let isHtmlPage = false;
@@ -540,7 +700,7 @@ class AnimeScraper {
           }
         }
         
-        if (isHtmlPage) continue; // Skip this source entirely
+        if (isHtmlPage) continue;
         
         // 🔥 FORCE RESOLVE: Blogger
         if (url.includes('blogger.com/video') || url.includes('blogspot.com')) {
@@ -554,13 +714,10 @@ class AnimeScraper {
                 url: video.url,
                 type: video.type,
                 quality: video.quality,
-                source: video.source, // blogger-streams, blogger-progressive, etc
+                source: video.source,
                 priority: 1
               });
             });
-            continue;
-          } else {
-            console.log(`   ⚠️ Blogger failed, skipping`);
             continue;
           }
         }
