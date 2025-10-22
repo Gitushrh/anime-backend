@@ -1,15 +1,18 @@
 {
-  "name": "railway-kitanime-proxy",
-  "version": "1.0.0",
-  "description": "Simple proxy to Kitanime API - No scraping needed",
+  "name": "railway-kitanime-backend",
+  "version": "2.0.0",
+  "description": "Kitanime API backend with Puppeteer scraper - MP4/HLS only",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "keywords": [
     "anime",
-    "proxy",
-    "kitanime"
+    "kitanime",
+    "scraper",
+    "puppeteer",
+    "railway"
   ],
   "author": "",
   "license": "ISC",
