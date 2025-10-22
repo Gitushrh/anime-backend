@@ -40,16 +40,22 @@ async function extractBloggerVideo(bloggerUrl) {
       let match;
       
       while ((match = playUrlPattern.exec(streamsContent)) !== null) {
-        const videoUrl = match[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+        let videoUrl = match[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
         const quality = match[2];
         
-        if (videoUrl.includes('videoplayback') || videoUrl.includes('googlevideo')) {
+        // ✅ FIX: Convert relative URL to absolute
+        if (videoUrl.startsWith('/')) {
+          videoUrl = 'https://www.blogger.com' + videoUrl;
+        }
+        
+        if (videoUrl.includes('videoplayback') || videoUrl.includes('googlevideo') || videoUrl.includes('blogger.com')) {
           videos.push({
             url: videoUrl,
             quality: quality,
             type: 'mp4',
             source: 'blogger-resolved'
           });
+          console.log(`   ✅ Found: ${quality} - ${videoUrl.substring(0, 50)}...`);
         }
       }
     }
@@ -58,14 +64,21 @@ async function extractBloggerVideo(bloggerUrl) {
     if (videos.length === 0) {
       const progressiveMatch = html.match(/"progressive_url":"([^"]+)"/);
       if (progressiveMatch) {
-        const videoUrl = progressiveMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
-        if (videoUrl.includes('googlevideo')) {
+        let videoUrl = progressiveMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+        
+        // ✅ FIX: Convert relative URL to absolute
+        if (videoUrl.startsWith('/')) {
+          videoUrl = 'https://www.blogger.com' + videoUrl;
+        }
+        
+        if (videoUrl.includes('googlevideo') || videoUrl.includes('blogger.com')) {
           videos.push({
             url: videoUrl,
             quality: extractQualityFromUrl(videoUrl),
             type: 'mp4',
             source: 'blogger-resolved'
           });
+          console.log(`   ✅ Progressive: ${videoUrl.substring(0, 50)}...`);
         }
       }
     }
@@ -74,19 +87,26 @@ async function extractBloggerVideo(bloggerUrl) {
     if (videos.length === 0) {
       const playUrlMatch = html.match(/"play_url":"([^"]+)"/);
       if (playUrlMatch) {
-        const videoUrl = playUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
-        if (videoUrl.includes('googlevideo')) {
+        let videoUrl = playUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+        
+        // ✅ FIX: Convert relative URL to absolute
+        if (videoUrl.startsWith('/')) {
+          videoUrl = 'https://www.blogger.com' + videoUrl;
+        }
+        
+        if (videoUrl.includes('googlevideo') || videoUrl.includes('blogger.com')) {
           videos.push({
             url: videoUrl,
             quality: extractQualityFromUrl(videoUrl),
             type: 'mp4',
             source: 'blogger-resolved'
           });
+          console.log(`   ✅ Play URL: ${videoUrl.substring(0, 50)}...`);
         }
       }
     }
 
-    console.log(`   ✅ Extracted ${videos.length} video URLs`);
+    console.log(`   ✅ Total extracted: ${videos.length} video URLs`);
     return videos;
     
   } catch (error) {
@@ -94,7 +114,6 @@ async function extractBloggerVideo(bloggerUrl) {
     return [];
   }
 }
-
 function extractQualityFromUrl(url) {
   const patterns = [
     { regex: /\/(\d{3,4})p?[\/\.]/, format: (m) => `${m[1]}p` },
