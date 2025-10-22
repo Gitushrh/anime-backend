@@ -1,4 +1,4 @@
-// server.js - RAILWAY BACKEND WITH SCRAPER - FIXED
+// server.js - RAILWAY BACKEND FIXED - RETURN FULL URLS
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -13,7 +13,7 @@ app.use(express.json());
 const KITANIME_API = 'https://kitanime-api.vercel.app/v1';
 
 // ============================================
-// 🔥 SCRAPER FUNCTIONS
+// 🔥 BLOGGER SCRAPER - FIXED TO RETURN FULL URLS
 // ============================================
 
 async function extractBloggerVideo(bloggerUrl) {
@@ -25,7 +25,6 @@ async function extractBloggerVideo(bloggerUrl) {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': 'https://otakudesu.cloud/',
-        'Accept': 'text/html,application/xhtml+xml,application/xml',
       }
     });
 
@@ -44,7 +43,9 @@ async function extractBloggerVideo(bloggerUrl) {
         const quality = match[2];
         
         // ✅ FIX: Convert relative URL to absolute
-        if (videoUrl.startsWith('/')) {
+        if (videoUrl.startsWith('/blog/')) {
+          videoUrl = 'https://www.blogger.com' + videoUrl;
+        } else if (videoUrl.startsWith('/')) {
           videoUrl = 'https://www.blogger.com' + videoUrl;
         }
         
@@ -55,7 +56,7 @@ async function extractBloggerVideo(bloggerUrl) {
             type: 'mp4',
             source: 'blogger-resolved'
           });
-          console.log(`   ✅ Found: ${quality} - ${videoUrl.substring(0, 50)}...`);
+          console.log(`   ✅ Extracted: ${quality} - ${videoUrl.substring(0, 60)}...`);
         }
       }
     }
@@ -66,7 +67,6 @@ async function extractBloggerVideo(bloggerUrl) {
       if (progressiveMatch) {
         let videoUrl = progressiveMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
         
-        // ✅ FIX: Convert relative URL to absolute
         if (videoUrl.startsWith('/')) {
           videoUrl = 'https://www.blogger.com' + videoUrl;
         }
@@ -78,18 +78,17 @@ async function extractBloggerVideo(bloggerUrl) {
             type: 'mp4',
             source: 'blogger-resolved'
           });
-          console.log(`   ✅ Progressive: ${videoUrl.substring(0, 50)}...`);
+          console.log(`   ✅ Progressive: ${videoUrl.substring(0, 60)}...`);
         }
       }
     }
 
-    // Method 3: play_url direct
+    // Method 3: play_url
     if (videos.length === 0) {
       const playUrlMatch = html.match(/"play_url":"([^"]+)"/);
       if (playUrlMatch) {
         let videoUrl = playUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
         
-        // ✅ FIX: Convert relative URL to absolute
         if (videoUrl.startsWith('/')) {
           videoUrl = 'https://www.blogger.com' + videoUrl;
         }
@@ -101,12 +100,12 @@ async function extractBloggerVideo(bloggerUrl) {
             type: 'mp4',
             source: 'blogger-resolved'
           });
-          console.log(`   ✅ Play URL: ${videoUrl.substring(0, 50)}...`);
+          console.log(`   ✅ Play URL: ${videoUrl.substring(0, 60)}...`);
         }
       }
     }
 
-    console.log(`   ✅ Total extracted: ${videos.length} video URLs`);
+    console.log(`   ✅ Total extracted: ${videos.length} videos`);
     return videos;
     
   } catch (error) {
@@ -114,6 +113,7 @@ async function extractBloggerVideo(bloggerUrl) {
     return [];
   }
 }
+
 function extractQualityFromUrl(url) {
   const patterns = [
     { regex: /\/(\d{3,4})p?[\/\.]/, format: (m) => `${m[1]}p` },
@@ -139,44 +139,6 @@ function getQualityFromItag(itag) {
   return itagMap[itag] || 'auto';
 }
 
-async function scrapeDesustream(url) {
-  try {
-    console.log(`   🔄 Scraping Desustream...`);
-    
-    const response = await axios.get(url, {
-      timeout: 15000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Referer': 'https://otakudesu.cloud/',
-      }
-    });
-
-    const $ = cheerio.load(response.data);
-    const videos = [];
-
-    $('video source, iframe').each((i, el) => {
-      const src = $(el).attr('src');
-      if (src && src.includes('http')) {
-        if (src.includes('.mp4') || src.includes('.m3u8')) {
-          videos.push({
-            url: src,
-            quality: extractQualityFromUrl(src),
-            type: src.includes('.m3u8') ? 'hls' : 'mp4',
-            source: 'desustream-resolved'
-          });
-        }
-      }
-    });
-
-    console.log(`   ✅ Desustream: ${videos.length} videos`);
-    return videos;
-    
-  } catch (error) {
-    console.log(`   ❌ Desustream failed: ${error.message}`);
-    return [];
-  }
-}
-
 // ============================================
 // 🎯 MAIN EPISODE ENDPOINT
 // ============================================
@@ -199,134 +161,101 @@ app.get('/episode/:slug', async (req, res) => {
     }
 
     const episodeData = response.data.data;
-    const allLinks = [];
+    const resolvedLinks = [];
 
-    console.log('📊 Processing API links...');
+    // 🔥 SCRAPE BLOGGER LINKS
+    console.log('\n🔥 SCRAPING BLOGGER LINKS...');
     
     if (episodeData.stream_url) {
-      allLinks.push({
-        provider: 'Main Stream',
-        url: episodeData.stream_url,
-        type: episodeData.stream_url.includes('.m3u8') ? 'hls' : 'mp4',
-        quality: 'auto',
-        source: 'kitanime-api',
-        needsResolve: true
-      });
-    }
-
-    if (episodeData.steramList) {
-      Object.entries(episodeData.steramList).forEach(([quality, url]) => {
-        if (url && url.startsWith('http')) {
-          allLinks.push({
-            provider: `Stream ${quality}`,
-            url: url,
-            type: url.includes('.m3u8') ? 'hls' : 'mp4',
-            quality: quality.replace('p', '') + 'p',
-            source: 'kitanime-quality-list',
-            needsResolve: true
+      const url = episodeData.stream_url.toLowerCase();
+      
+      if (url.includes('blogger.com') || url.includes('blogspot.com')) {
+        const bloggerVideos = await extractBloggerVideo(episodeData.stream_url);
+        
+        if (bloggerVideos.length > 0) {
+          console.log(`✅ Blogger: Found ${bloggerVideos.length} videos`);
+          bloggerVideos.forEach(video => {
+            resolvedLinks.push({
+              provider: 'Main Stream (Blogger)',
+              url: video.url, // ✅ Already full URL now
+              type: video.type,
+              quality: video.quality,
+              source: 'blogger-resolved'
+            });
           });
         }
-      });
+      }
     }
 
-    if (episodeData.download_urls && episodeData.download_urls.mp4) {
-      for (const resGroup of episodeData.download_urls.mp4) {
-        const resolution = resGroup.resolution || 'auto';
-        if (resGroup.urls) {
-          for (const urlData of resGroup.urls) {
-            if (urlData.url && urlData.url.startsWith('http')) {
-              allLinks.push({
-                provider: `${urlData.provider} (MP4)`,
-                url: urlData.url,
-                type: 'mp4',
-                quality: resolution,
-                source: 'kitanime-download-mp4',
-                needsResolve: true
+    // Process quality variants
+    if (episodeData.steramList) {
+      for (const [quality, url] of Object.entries(episodeData.steramList)) {
+        if (url && url.startsWith('http')) {
+          const urlLower = url.toLowerCase();
+          
+          if (urlLower.includes('blogger.com') || urlLower.includes('blogspot.com')) {
+            const bloggerVideos = await extractBloggerVideo(url);
+            
+            if (bloggerVideos.length > 0) {
+              bloggerVideos.forEach(video => {
+                resolvedLinks.push({
+                  provider: `Quality ${quality} (Blogger)`,
+                  url: video.url, // ✅ Full URL
+                  type: video.type,
+                  quality: quality,
+                  source: 'blogger-resolved'
+                });
               });
             }
+          } else if (urlLower.includes('googlevideo.com') || urlLower.endsWith('.mp4')) {
+            resolvedLinks.push({
+              provider: `Stream ${quality}`,
+              url: url,
+              type: 'mp4',
+              quality: quality,
+              source: 'kitanime-direct'
+            });
           }
         }
       }
     }
 
-    console.log(`📊 API returned ${allLinks.length} links (may need resolving)`);
-
-    // 🔥 RESOLVE REDIRECTS
-    console.log('\n🔥 RESOLVING REDIRECTS...');
-    const resolvedLinks = [];
-
-    for (const link of allLinks.slice(0, 10)) {
-      try {
-        const url = link.url.toLowerCase();
+    // Process download URLs
+    if (episodeData.download_urls && episodeData.download_urls.mp4) {
+      for (const resGroup of episodeData.download_urls.mp4) {
+        const resolution = resGroup.resolution || 'auto';
         
-        // Direct playable URLs
-        if (url.includes('googlevideo.com') || 
-            url.includes('videoplayback') ||
-            url.endsWith('.mp4') ||
-            url.endsWith('.m3u8')) {
-          console.log(`   ✅ Direct: ${link.provider}`);
-          resolvedLinks.push(link);
-          continue;
-        }
-
-        // Blogger URLs - scrape them
-        if (url.includes('blogger.com') || url.includes('blogspot.com')) {
-          const bloggerVideos = await extractBloggerVideo(link.url);
-          if (bloggerVideos.length > 0) {
-            bloggerVideos.forEach(video => {
-              resolvedLinks.push({
-                provider: `${link.provider} (Resolved)`,
-                url: video.url, // ✅ FULL URL FROM BLOGGER
-                type: video.type,
-                quality: video.quality,
-                source: 'blogger-resolved'
-              });
-            });
+        if (resGroup.urls && Array.isArray(resGroup.urls)) {
+          for (const urlData of resGroup.urls) {
+            if (urlData.url && urlData.url.startsWith('http')) {
+              const urlLower = urlData.url.toLowerCase();
+              
+              if (urlLower.includes('blogger.com') || urlLower.includes('blogspot.com')) {
+                const bloggerVideos = await extractBloggerVideo(urlData.url);
+                
+                if (bloggerVideos.length > 0) {
+                  bloggerVideos.forEach(video => {
+                    resolvedLinks.push({
+                      provider: `${urlData.provider} ${resolution} (Blogger)`,
+                      url: video.url, // ✅ Full URL
+                      type: video.type,
+                      quality: resolution,
+                      source: 'blogger-resolved'
+                    });
+                  });
+                }
+              } else if (urlLower.includes('googlevideo.com') || urlLower.endsWith('.mp4')) {
+                resolvedLinks.push({
+                  provider: `${urlData.provider} (MP4)`,
+                  url: urlData.url,
+                  type: 'mp4',
+                  quality: resolution,
+                  source: 'kitanime-download-mp4'
+                });
+              }
+            }
           }
-          continue;
         }
-
-        // Desustream URLs
-        if (url.includes('desustream')) {
-          const desuVideos = await scrapeDesustream(link.url);
-          if (desuVideos.length > 0) {
-            desuVideos.forEach(video => {
-              resolvedLinks.push({
-                provider: `${link.provider} (Resolved)`,
-                url: video.url, // ✅ FULL URL
-                type: video.type,
-                quality: video.quality,
-                source: 'desustream-resolved'
-              });
-            });
-          }
-          continue;
-        }
-
-        // Other URLs - try to resolve redirect
-        try {
-          const headResponse = await axios.head(link.url, {
-            timeout: 5000,
-            maxRedirects: 5,
-            validateStatus: (status) => status < 400
-          });
-
-          const finalUrl = headResponse.request.res.responseUrl || link.url;
-          
-          if (finalUrl.includes('googlevideo') || finalUrl.includes('videoplayback')) {
-            console.log(`   ✅ Resolved redirect: ${link.provider}`);
-            resolvedLinks.push({
-              ...link,
-              url: finalUrl, // ✅ FULL RESOLVED URL
-              source: 'railway-resolved'
-            });
-          }
-        } catch (e) {
-          resolvedLinks.push(link);
-        }
-
-      } catch (error) {
-        console.log(`   ⚠️ Skip ${link.provider}: ${error.message}`);
       }
     }
 
@@ -341,15 +270,14 @@ app.get('/episode/:slug', async (req, res) => {
       }
     }
 
-    // Format response
+    // Build response
     const streamUrl = uniqueLinks.find(l => l.type === 'mp4' || l.type === 'hls')?.url || 
-                      uniqueLinks[0]?.url || 
                       episodeData.stream_url;
     
     const streamList = {};
     const downloadUrls = { mp4: [], mkv: [] };
 
-    // Group MP4 by quality
+    // Group by quality
     const mp4ByQuality = {};
     uniqueLinks.filter(l => l.type === 'mp4').forEach(link => {
       if (!mp4ByQuality[link.quality]) mp4ByQuality[link.quality] = [];
@@ -363,7 +291,6 @@ app.get('/episode/:slug', async (req, res) => {
       downloadUrls.mp4.push({ resolution: quality, urls });
     });
 
-    // Build stream list
     uniqueLinks.forEach(link => {
       if (link.quality && link.quality !== 'auto') {
         streamList[link.quality] = link.url;
@@ -372,13 +299,13 @@ app.get('/episode/:slug', async (req, res) => {
 
     console.log(`\n✅ FINAL RESULTS:`);
     console.log(`   MP4: ${uniqueLinks.filter(l => l.type === 'mp4').length}`);
-    console.log(`   HLS: ${uniqueLinks.filter(l => l.type === 'hls').length}`);
-    console.log(`   Total resolved: ${uniqueLinks.length}`);
-
-    // ✅ DEBUG: Print first URL
+    console.log(`   Total: ${uniqueLinks.length}`);
+    
     if (uniqueLinks.length > 0) {
-      console.log(`\n📺 FIRST URL (for debugging):`);
-      console.log(`   ${uniqueLinks[0].url.substring(0, 100)}...`);
+      console.log(`\n📺 SAMPLE URL (should be full):`);
+      const sampleUrl = uniqueLinks[0].url;
+      console.log(`   ${sampleUrl.substring(0, 100)}...`);
+      console.log(`   Starts with http: ${sampleUrl.startsWith('http')}`);
     }
 
     res.json({
@@ -440,12 +367,11 @@ proxyEndpoints.forEach(endpoint => {
 app.get('/', (req, res) => {
   res.json({
     status: 'Online',
-    service: 'Railway Kitanime Backend with Scraper',
-    version: '2.0.1',
+    service: 'Railway Kitanime Backend with Blogger Scraper',
+    version: '2.1.0',
     features: [
-      'Blogger video extraction',
-      'Desustream resolver',
-      'Redirect resolution',
+      'Blogger video extraction (FULL URLs)',
+      'Multiple quality variants',
       'MP4 only (MKV excluded)'
     ]
   });
@@ -454,6 +380,6 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log(`\n🚀 Railway Backend running on port ${PORT}`);
   console.log(`📡 Proxying to: ${KITANIME_API}`);
-  console.log(`🔥 Scraping enabled for: Blogger, Desustream`);
-  console.log(`⚠️  MKV links excluded\n`);
+  console.log(`🔥 Blogger scraper: ACTIVE (returns full URLs)`);
+  console.log(`⚠️  MKV excluded\n`);
 });
