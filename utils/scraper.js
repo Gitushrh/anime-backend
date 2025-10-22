@@ -1,13 +1,13 @@
-// utils/scraper.js - ULTIMATE VERSION with yt-dlp integration
+// utils/scraper.js - KITANIME AGGRESSIVE SCRAPER
 const axios = require('axios');
 const cheerio = require('cheerio');
 const puppeteer = require('puppeteer');
 const https = require('https');
 const { execSync } = require('child_process');
 
-class AnimeScraper {
+class KitanimeScraper {
   constructor() {
-    this.baseUrl = 'https://samehadaku.email';
+    this.baseUrl = 'https://kitanime-api.vercel.app/v1';
     this.browser = null;
     this.requestCount = 0;
     
@@ -26,7 +26,6 @@ class AnimeScraper {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
         'Accept-Encoding': 'gzip, deflate, br',
-        'Referer': 'https://samehadaku.email/',
       },
       maxRedirects: 10,
       validateStatus: (status) => status < 500
@@ -52,12 +51,11 @@ class AnimeScraper {
     }
   }
 
-  // 🔥 YT-DLP RESOLVER - For Mega/Mediafire/Google Drive
+  // 🔥 YT-DLP RESOLVER
   resolveWithYtDlp(url) {
     try {
       console.log(`   🎯 Trying yt-dlp...`);
       
-      // Check if yt-dlp is installed
       try {
         execSync('yt-dlp --version', { stdio: 'ignore' });
       } catch (e) {
@@ -83,90 +81,17 @@ class AnimeScraper {
     }
   }
 
-  // 🔥 MEGA RESOLVER - Direct API approach
-  async resolveMegaNz(url) {
-    try {
-      console.log(`   🎯 Trying Mega direct API...`);
-      
-      // Try yt-dlp first
-      const ytdlpResult = this.resolveWithYtDlp(url);
-      if (ytdlpResult) return [{ url: ytdlpResult, type: 'mp4', quality: 'auto', source: 'yt-dlp-mega' }];
-      
-      // Fallback: Try to get file info
-      const fileIdMatch = url.match(/(?:file|embed)\/([a-zA-Z0-9_-]+)(?:#([a-zA-Z0-9_-]+))?/);
-      if (fileIdMatch) {
-        console.log(`   ℹ️ Mega requires decryption key - try yt-dlp or browser`);
-      }
-      
-      return null;
-    } catch (error) {
-      console.log(`   ⚠️ Mega resolver failed`);
-      return null;
-    }
-  }
-
-  // 🔥 MEDIAFIRE RESOLVER
-  async resolveMediafire(url) {
-    try {
-      console.log(`   🎯 Trying Mediafire...`);
-      
-      // Try yt-dlp first
-      const ytdlpResult = this.resolveWithYtDlp(url);
-      if (ytdlpResult) return [{ url: ytdlpResult, type: 'mp4', quality: 'auto', source: 'yt-dlp-mediafire' }];
-      
-      // Fallback: Try direct scraping
-      const response = await this.fetchWithRetry(url, {
-        headers: { 'Referer': 'https://www.mediafire.com/' }
-      }, 2);
-      
-      const $ = cheerio.load(response.data);
-      const downloadLink = $('#downloadButton').attr('href') || 
-                          $('a.input[href*="download"]').attr('href') ||
-                          $('a[aria-label="Download file"]').attr('href');
-      
-      if (downloadLink && downloadLink.startsWith('http')) {
-        console.log(`   ✅ Mediafire direct link found!`);
-        return [{ url: downloadLink, type: 'mp4', quality: 'auto', source: 'mediafire-scrape' }];
-      }
-      
-      return null;
-    } catch (error) {
-      console.log(`   ⚠️ Mediafire resolver failed`);
-      return null;
-    }
-  }
-
-  // 🔥 GOOGLE DRIVE RESOLVER
-  async resolveGoogleDrive(url) {
-    try {
-      console.log(`   🎯 Trying Google Drive...`);
-      
-      // Try yt-dlp first
-      const ytdlpResult = this.resolveWithYtDlp(url);
-      if (ytdlpResult) return [{ url: ytdlpResult, type: 'mp4', quality: 'auto', source: 'yt-dlp-gdrive' }];
-      
-      // Extract file ID
-      const fileIdMatch = url.match(/[-\w]{25,}/);
-      if (!fileIdMatch) return null;
-      
-      const fileId = fileIdMatch[0];
-      const directUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-      
-      console.log(`   ✅ Google Drive direct URL generated`);
-      return [{ url: directUrl, type: 'mp4', quality: 'auto', source: 'gdrive-direct' }];
-    } catch (error) {
-      console.log(`   ⚠️ Google Drive resolver failed`);
-      return null;
-    }
-  }
-
-  // 🔥 BLOGGER RESOLUTION
+  // 🔥 BLOGGER RESOLVER - ENHANCED
   async resolveBloggerUrl(bloggerUrl) {
     try {
       console.log(`   🎬 Resolving Blogger...`);
       
       const response = await this.fetchWithRetry(bloggerUrl, {
-        headers: { 'Referer': this.baseUrl, 'Accept': 'text/html,*/*' },
+        headers: { 
+          'Referer': this.baseUrl,
+          'Accept': 'text/html,*/*',
+          'Host': new URL(bloggerUrl).host
+        },
         timeout: 20000
       }, 3);
 
@@ -286,27 +211,6 @@ class AnimeScraper {
     return !invalid.some(pattern => url.toLowerCase().includes(pattern));
   }
 
-  isVideoEmbedUrl(url) {
-    const videoProviders = [
-      'blogger.com/video', 'blogspot.com', 'googlevideo.com',
-      'desustream', 'streamtape', 'mp4upload', 'acefile',
-      'filelions', 'vidguard', 'streamwish', 'wishfast',
-    ];
-
-    const skipPatterns = [
-      'safelink', 'otakufiles', 'racaty', 'gdrive',
-      'drive.google', 'zippyshare', 'mega.nz', 'mediafire'
-    ];
-
-    const urlLower = url.toLowerCase();
-    
-    if (skipPatterns.some(pattern => urlLower.includes(pattern))) {
-      return false;
-    }
-
-    return videoProviders.some(provider => urlLower.includes(provider));
-  }
-
   async initBrowser() {
     if (!this.browser) {
       console.log('🚀 Launching Puppeteer...');
@@ -362,13 +266,13 @@ class AnimeScraper {
     }
   }
 
-  // PUPPETEER EXTRACTION
+  // 🔥 PUPPETEER EXTRACTION - AGGRESSIVE
   async extractWithPuppeteer(url, depth = 0) {
     let page = null;
     try {
-      if (depth > 2) return null;
+      if (depth > 3) return null;
 
-      console.log(`${'  '.repeat(depth)}🔥 PUPPETEER`);
+      console.log(`${'  '.repeat(depth)}🔥 PUPPETEER DEPTH ${depth}`);
       
       const browser = await this.initBrowser();
       page = await browser.newPage();
@@ -385,6 +289,8 @@ class AnimeScraper {
         
         if ((reqUrl.includes('googlevideo.com') || 
              reqUrl.includes('videoplayback') ||
+             reqUrl.includes('blogger.com') ||
+             reqUrl.includes('blogspot.com') ||
              reqUrl.endsWith('.mp4') || 
              reqUrl.endsWith('.m3u8')) &&
             this.isValidVideoUrl(reqUrl)) {
@@ -400,7 +306,7 @@ class AnimeScraper {
       
       await new Promise(resolve => setTimeout(resolve, 3000));
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       const iframes = await page.$$eval('iframe', iframes => 
         iframes.map(iframe => iframe.src).filter(src => src && src.startsWith('http'))
@@ -428,17 +334,17 @@ class AnimeScraper {
         }
       }
 
-      // Priority 2: Blogger
+      // Priority 2: Blogger extraction
       const bloggerData = this.extractBloggerFromHtml(html);
       if (bloggerData && bloggerData.length > 0) {
-        console.log(`${'  '.repeat(depth)}✅ Blogger: ${bloggerData.length}`);
+        console.log(`${'  '.repeat(depth)}✅ Blogger HTML: ${bloggerData.length}`);
         return bloggerData;
       }
 
-      // Priority 3: Nested iframes
-      for (const iframeUrl of iframeUrls.slice(0, 2)) {
-        if (this.isVideoEmbedUrl(iframeUrl) && iframeUrl !== url) {
-          console.log(`${'  '.repeat(depth)}🔄 Nested...`);
+      // Priority 3: Nested iframes - MORE AGGRESSIVE
+      for (const iframeUrl of iframeUrls.slice(0, 3)) {
+        if (iframeUrl !== url) {
+          console.log(`${'  '.repeat(depth)}🔄 Nested iframe...`);
           const result = await this.extractWithPuppeteer(iframeUrl, depth + 1);
           if (result && result.length > 0) return result;
         }
@@ -459,162 +365,102 @@ class AnimeScraper {
     }
   }
 
-  // AXIOS EXTRACTION
-  async extractWithAxios(url, depth = 0) {
+  // 🔥 MAIN EPISODE SCRAPER
+  async getStreamingLink(episodeSlug) {
     try {
-      if (depth > 2) return null;
-
-      console.log(`${'  '.repeat(depth)}⚡ AXIOS`);
-
-      const response = await this.fetchWithRetry(url, {
-        headers: {
-          'Referer': this.baseUrl,
-          'Origin': this.baseUrl,
-          'Accept': 'text/html,*/*',
-        },
-        timeout: 25000,
-        maxRedirects: 10
-      }, 2);
-
-      let html = response.data;
-      const $ = cheerio.load(html);
-
-      console.log(`${'  '.repeat(depth)}   HTML: ${html.length} bytes`);
-
-      // Priority 1: Blogger in current HTML
-      const bloggerData = this.extractBloggerFromHtml(html);
-      if (bloggerData && bloggerData.length > 0) {
-        console.log(`${'  '.repeat(depth)}✅ Blogger: ${bloggerData.length}`);
-        return bloggerData;
-      }
-
-      // Priority 2: Find Blogger iframes
-      const bloggerUrls = new Set();
+      console.log(`\n🎬 EPISODE: ${episodeSlug}`);
+      console.log(`📡 Fetching from Kitanime API...`);
       
-      $('iframe[src]').each((i, el) => {
-        const src = $(el).attr('src');
-        if (src && (src.includes('blogger.com/video') || src.includes('blogspot.com'))) {
-          bloggerUrls.add(src.replace(/&amp;/g, '&'));
-        }
-      });
-
-      const iframePatterns = [
-        /<iframe[^>]+src=["']([^"']*blogger\.com\/video[^"']*)/gi,
-        /<iframe[^>]+src=["']([^"']*blogspot\.com[^"']*)/gi,
-      ];
-
-      for (const pattern of iframePatterns) {
-        const matches = [...html.matchAll(pattern)];
-        for (const match of matches) {
-          const bloggerUrl = match[1].replace(/&amp;/g, '&').replace(/\\/g, '');
-          if (bloggerUrl.startsWith('http')) {
-            bloggerUrls.add(bloggerUrl);
-          }
-        }
-      }
-
-      for (const bloggerUrl of bloggerUrls) {
-        console.log(`${'  '.repeat(depth)}🔍 Blogger iframe...`);
-        try {
-          const bloggerResponse = await this.fetchWithRetry(bloggerUrl, {
-            headers: { 'Referer': url, 'Accept': '*/*' },
-            timeout: 15000
-          }, 2);
-          const bloggerResults = this.extractBloggerFromHtml(bloggerResponse.data);
-          if (bloggerResults && bloggerResults.length > 0) {
-            console.log(`${'  '.repeat(depth)}✅ Success: ${bloggerResults.length}`);
-            return bloggerResults;
-          }
-        } catch (e) {
-          console.log(`${'  '.repeat(depth)}⚠️ Failed`);
-        }
-        await this.delay(200);
-      }
-
-      // Priority 3: Direct video URLs
-      const videoPatterns = [
-        /https?:\/\/[^"'\s<>]*googlevideo\.com[^"'\s<>]*videoplayback[^"'\s<>]*/gi,
-        /https?:\/\/s\d+\.wibufile\.com\/[^"'\s<>]+\.mp4/gi,
-        /https?:\/\/[^"'\s<>]+\.mp4(?:[?#][^"'\s<>]*)?/gi,
-        /https?:\/\/[^"'\s<>]+\.m3u8(?:[?#][^"'\s<>]*)?/gi,
-        /"file":\s*"([^"]+(?:mp4|m3u8)[^"]*)"/gi,
-        /file:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/gi,
-      ];
-
-      for (const pattern of videoPatterns) {
-        const matches = [...html.matchAll(pattern)];
-        for (const match of matches) {
-          let videoUrl = (match[1] || match[0]).replace(/\\u0026/g, '&').replace(/\\/g, '');
-          
-          if (this.isValidVideoUrl(videoUrl) && videoUrl.startsWith('http')) {
-            const type = videoUrl.includes('.m3u8') ? 'hls' : 'mp4';
-            console.log(`${'  '.repeat(depth)}✅ Direct: ${type}`);
-            return [{ url: videoUrl, type, quality: this.extractQualityFromUrl(videoUrl), source: 'axios-direct' }];
-          }
-        }
-      }
-
-      // Priority 4: Nested iframes
-      const nestedIframes = [];
-      $('iframe[src], [data-src]').each((i, el) => {
-        const src = $(el).attr('src') || $(el).attr('data-src');
-        if (src && src.startsWith('http') && src !== url) {
-          nestedIframes.push(src);
-        }
-      });
-
-      console.log(`${'  '.repeat(depth)}🔍 Nested: ${nestedIframes.length}`);
-
-      for (const nestedUrl of nestedIframes.slice(0, 3)) {
-        if (this.isVideoEmbedUrl(nestedUrl)) {
-          console.log(`${'  '.repeat(depth)}🔄 Following...`);
-          const result = await this.extractWithAxios(nestedUrl, depth + 1);
-          if (result && result.length > 0) return result;
-        }
-      }
-
-      console.log(`${'  '.repeat(depth)}❌ No video`);
-      return null;
-
-    } catch (error) {
-      console.error(`${'  '.repeat(depth)}Axios Error:`, error.message);
-      return null;
-    }
-  }
-
-  // 🔥 MAIN SCRAPER WITH YT-DLP INTEGRATION
-  async getStreamingLink(episodeId) {
-    try {
-      console.log(`\n🎬 EPISODE: ${episodeId}`);
+      const response = await this.fetchWithRetry(`${this.baseUrl}/episode/${episodeSlug}`);
       
-      const $ = await cheerio.load((await this.fetchWithRetry(`${this.baseUrl}/episode/${episodeId}`)).data);
-      const iframeSources = [];
-
-      $('.mirrorstream ul li a, .mirrorstream a, .mirror a, .download ul li a, .venutama iframe, iframe[src]').each((i, el) => {
-        const $el = $(el);
-        const provider = $el.text().trim() || `Source ${i + 1}`;
-        const url = $el.attr('href') || $el.attr('data-content') || $el.attr('src');
-        
-        if (url && url.startsWith('http')) {
-          iframeSources.push({ provider, url });
-        }
-      });
-
-      // Remove duplicates
-      const uniqueSources = [];
-      const seenUrls = new Set();
-      for (const source of iframeSources) {
-        if (!seenUrls.has(source.url)) {
-          seenUrls.add(source.url);
-          uniqueSources.push(source);
-        }
+      if (!response.data || response.data.status !== 'Ok') {
+        console.log('❌ API returned error');
+        return [];
       }
 
-      console.log(`📡 Sources: ${uniqueSources.length}`);
-
+      const episodeData = response.data.data;
       const allLinks = [];
-      let puppeteerAvailable = true;
 
+      // Extract stream URLs
+      if (episodeData.stream_url) {
+        console.log('🎯 Found stream_url');
+        allLinks.push({
+          provider: 'Main Stream',
+          url: episodeData.stream_url,
+          type: episodeData.stream_url.includes('.m3u8') ? 'hls' : 'mp4',
+          quality: 'auto',
+          source: 'api-stream',
+          priority: 1
+        });
+      }
+
+      // Extract quality list
+      if (episodeData.steramList) {
+        console.log('🎯 Found steramList (quality variants)');
+        Object.entries(episodeData.steramList).forEach(([quality, url]) => {
+          if (url && url.startsWith('http')) {
+            allLinks.push({
+              provider: `Stream ${quality}`,
+              url: url,
+              type: url.includes('.m3u8') ? 'hls' : 'mp4',
+              quality: quality.replace('p', '') + 'p',
+              source: 'api-quality-list',
+              priority: 1
+            });
+          }
+        });
+      }
+
+      // Extract download URLs - MP4
+      if (episodeData.download_urls && episodeData.download_urls.mp4) {
+        console.log('🎯 Processing MP4 downloads');
+        for (const resGroup of episodeData.download_urls.mp4) {
+          const resolution = resGroup.resolution || 'auto';
+          
+          if (resGroup.urls && Array.isArray(resGroup.urls)) {
+            for (const urlData of resGroup.urls) {
+              if (urlData.url && urlData.url.startsWith('http')) {
+                allLinks.push({
+                  provider: `${urlData.provider} (MP4)`,
+                  url: urlData.url,
+                  type: 'mp4',
+                  quality: resolution,
+                  source: 'api-download-mp4',
+                  priority: 2
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // Extract download URLs - MKV
+      if (episodeData.download_urls && episodeData.download_urls.mkv) {
+        console.log('🎯 Processing MKV downloads');
+        for (const resGroup of episodeData.download_urls.mkv) {
+          const resolution = resGroup.resolution || 'auto';
+          
+          if (resGroup.urls && Array.isArray(resGroup.urls)) {
+            for (const urlData of resGroup.urls) {
+              if (urlData.url && urlData.url.startsWith('http')) {
+                allLinks.push({
+                  provider: `${urlData.provider} (MKV)`,
+                  url: urlData.url,
+                  type: 'mkv',
+                  quality: resolution,
+                  source: 'api-download-mkv',
+                  priority: 3
+                });
+              }
+            }
+          }
+        }
+      }
+
+      console.log(`\n📊 API Results: ${allLinks.length} links`);
+
+      // 🔥 AGGRESSIVE SCRAPING - Try Puppeteer for Blogger links
+      let puppeteerAvailable = true;
       try {
         await this.initBrowser();
       } catch (error) {
@@ -622,166 +468,39 @@ class AnimeScraper {
         puppeteerAvailable = false;
       }
 
-      // Extract from sources
-      for (const source of uniqueSources) {
-        console.log(`\n🔥 ${source.provider}`);
-        const url = source.url;
+      if (puppeteerAvailable && episodeData.stream_url) {
+        console.log('\n🔥 AGGRESSIVE SCRAPING - Extracting with Puppeteer...');
         
-        // 🔥 SPECIAL HANDLERS FOR MEGA/MEDIAFIRE/GDRIVE
-        if (url.toLowerCase().includes('mega.nz')) {
-          console.log(`   🎯 Mega detected - using special resolver...`);
-          const resolved = await this.resolveMegaNz(url);
-          if (resolved && resolved.length > 0) {
-            resolved.forEach(video => {
-              allLinks.push({
-                provider: source.provider,
-                url: video.url,
-                type: video.type,
-                quality: video.quality || 'auto',
-                source: video.source,
-                priority: 1
-              });
-            });
-            continue;
-          }
-        }
-        
-        if (url.toLowerCase().includes('mediafire.com')) {
-          console.log(`   🎯 Mediafire detected - using special resolver...`);
-          const resolved = await this.resolveMediafire(url);
-          if (resolved && resolved.length > 0) {
-            resolved.forEach(video => {
-              allLinks.push({
-                provider: source.provider,
-                url: video.url,
-                type: video.type,
-                quality: video.quality || 'auto',
-                source: video.source,
-                priority: 1
-              });
-            });
-            continue;
-          }
-        }
-        
-        if (url.toLowerCase().includes('drive.google.com')) {
-          console.log(`   🎯 Google Drive detected - using special resolver...`);
-          const resolved = await this.resolveGoogleDrive(url);
-          if (resolved && resolved.length > 0) {
-            resolved.forEach(video => {
-              allLinks.push({
-                provider: source.provider,
-                url: video.url,
-                type: video.type,
-                quality: video.quality || 'auto',
-                source: video.source,
-                priority: 1
-              });
-            });
-            continue;
-          }
-        }
-        
-        // ❌ SKIP OTHER KNOWN HTML PAGES
-        const htmlPagePatterns = [
-          'pixeldrain.com/u/',
-          'pixeldrain.com/l/',
-          'filedon.co/embed',
-          'filedon.co/view',
-          'gofile.io/d/',
-        ];
-        
-        let isHtmlPage = false;
-        for (const pattern of htmlPagePatterns) {
-          if (url.toLowerCase().includes(pattern)) {
-            console.log(`   ❌ SKIP: Known HTML page - ${pattern}`);
-            isHtmlPage = true;
-            break;
-          }
-        }
-        
-        if (isHtmlPage) continue;
-        
-        // 🔥 FORCE RESOLVE: Blogger
-        if (url.includes('blogger.com/video') || url.includes('blogspot.com')) {
-          console.log(`   🎬 Blogger detected - RESOLVING...`);
-          const resolvedVideos = await this.resolveBloggerUrl(url);
+        try {
+          const scrapedResults = await this.extractWithPuppeteer(episodeData.stream_url);
           
-          if (resolvedVideos && resolvedVideos.length > 0) {
-            resolvedVideos.forEach(video => {
-              allLinks.push({
-                provider: source.provider,
-                url: video.url,
-                type: video.type,
-                quality: video.quality,
-                source: video.source,
-                priority: 1
-              });
+          if (scrapedResults && scrapedResults.length > 0) {
+            console.log(`✅ Puppeteer found ${scrapedResults.length} additional links`);
+            scrapedResults.forEach(result => {
+              if (!allLinks.some(link => link.url === result.url)) {
+                allLinks.push({
+                  ...result,
+                  priority: 1
+                });
+              }
             });
-            continue;
           }
+        } catch (scrapeError) {
+          console.log(`⚠️ Puppeteer scraping failed: ${scrapeError.message}`);
         }
-        
-        // Direct Wibufile CDN
-        if (url.match(/https?:\/\/s\d+\.wibufile\.com\/.*\.mp4/)) {
-          console.log(`   ✅ Direct Wibufile`);
-          allLinks.push({
-            provider: source.provider,
-            url: url,
-            type: 'mp4',
-            quality: this.extractQualityFromUrl(url),
-            source: 'streaming-server',
-            priority: 1
-          });
-          continue;
-        }
-        
-        // Try full extraction (Puppeteer + Axios)
-        let results = null;
-        
-        if (puppeteerAvailable) {
-          try {
-            results = await this.extractWithPuppeteer(url);
-          } catch (error) {
-            console.log('⚠️ Puppeteer failed, trying axios');
-          }
-        }
-        
-        if (!results || results.length === 0) {
-          try {
-            results = await this.extractWithAxios(url);
-          } catch (error) {
-            console.log('⚠️ Axios failed');
-          }
-        }
-        
-        if (results && results.length > 0) {
-          results.forEach(result => {
-            allLinks.push({
-              provider: source.provider,
-              url: result.url,
-              type: result.type,
-              quality: result.quality || 'auto',
-              source: result.source,
-              priority: result.type === 'mp4' ? 1 : 2
-            });
-          });
-        }
-        
-        await this.delay(300);
       }
 
       // Remove duplicates
       const uniqueLinks = [];
-      const seenVideoUrls = new Set();
+      const seenUrls = new Set();
       for (const link of allLinks) {
-        if (!seenVideoUrls.has(link.url)) {
-          seenVideoUrls.add(link.url);
+        if (!seenUrls.has(link.url)) {
+          seenUrls.add(link.url);
           uniqueLinks.push(link);
         }
       }
 
-      // Sort by priority
+      // Sort by priority and quality
       uniqueLinks.sort((a, b) => {
         if (a.priority !== b.priority) return a.priority - b.priority;
         const qA = parseInt(a.quality) || 0;
@@ -789,13 +508,14 @@ class AnimeScraper {
         return qB - qA;
       });
 
-      console.log(`\n✅ RESULTS:`);
+      console.log(`\n✅ FINAL RESULTS:`);
       console.log(`   MP4: ${uniqueLinks.filter(l => l.type === 'mp4').length}`);
       console.log(`   HLS: ${uniqueLinks.filter(l => l.type === 'hls').length}`);
+      console.log(`   MKV: ${uniqueLinks.filter(l => l.type === 'mkv').length}`);
       console.log(`   Total: ${uniqueLinks.length}`);
 
       if (uniqueLinks.length > 0) {
-        console.log(`\n🎉 TOP SOURCES:`);
+        console.log(`\n🎉 TOP 5 SOURCES:`);
         uniqueLinks.slice(0, 5).forEach((link, i) => {
           console.log(`   ${i + 1}. ${link.provider} - ${link.quality} (${link.source})`);
         });
@@ -809,4 +529,4 @@ class AnimeScraper {
   }
 }
 
-module.exports = AnimeScraper;
+module.exports = KitanimeScraper;

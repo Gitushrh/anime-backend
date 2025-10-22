@@ -1,12 +1,12 @@
-// server.js - SAMEHADAKU COMPLETE API v1.0.0
+// server.js - KITANIME COMPLETE API v2.0.0
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-const AnimeScraper = require('./utils/scraper');
+const KitanimeScraper = require('./utils/scraper');
 
 const app = express();
-const sankaBaseUrl = 'https://www.sankavollerei.com/anime';
-const scraper = new AnimeScraper();
+const kitanimeBaseUrl = 'https://kitanime-api.vercel.app/v1';
+const scraper = new KitanimeScraper();
 
 // ============================================
 // MIDDLEWARE
@@ -38,59 +38,56 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'OK',
-    message: 'Samehadaku Complete API',
-    version: '1.0.0',
-    description: 'Full Samehadaku API with aggressive scraping',
+    message: 'Kitanime Complete API',
+    version: '2.0.0',
+    description: 'Full Kitanime API with aggressive scraping',
     features: [
-      'All Samehadaku endpoints',
-      'Aggressive HTTPS scraping',
-      'Enhanced video extraction',
-      'Download links support',
-      'Multiple quality options'
+      'All Kitanime/Otakudesu endpoints',
+      'Aggressive video extraction',
+      'Multiple quality support',
+      'Puppeteer-enhanced scraping',
+      'Download links support'
     ],
     routes: {
-      home: 'GET /samehadaku/home',
-      recent: 'GET /samehadaku/recent?page=1',
-      search: 'GET /samehadaku/search?q=naruto&page=1',
-      ongoing: 'GET /samehadaku/ongoing?page=1&order=popular',
-      completed: 'GET /samehadaku/completed?page=1&order=latest',
-      popular: 'GET /samehadaku/popular?page=1',
-      movies: 'GET /samehadaku/movies?page=1&order=update',
-      list: 'GET /samehadaku/list',
-      schedule: 'GET /samehadaku/schedule',
-      genres: 'GET /samehadaku/genres',
-      genreDetail: 'GET /samehadaku/genres/:genreId?page=1',
-      batch: 'GET /samehadaku/batch?page=1',
-      animeDetail: 'GET /samehadaku/anime/:animeId',
-      episode: 'GET /samehadaku/episode/:episodeId',
-      batchDetail: 'GET /samehadaku/batch/:batchId',
-      server: 'GET /samehadaku/server/:serverId'
+      home: 'GET /home',
+      search: 'GET /search/:keyword',
+      ongoing: 'GET /ongoing-anime/:page?',
+      completed: 'GET /complete-anime/:page?',
+      animeDetail: 'GET /anime/:slug',
+      episodes: 'GET /anime/:slug/episodes',
+      episodeByNumber: 'GET /anime/:slug/episodes/:episode',
+      episodeBySlug: 'GET /episode/:slug',
+      batch: 'GET /batch/:slug',
+      animeBatch: 'GET /anime/:slug/batch',
+      genres: 'GET /genres',
+      genreDetail: 'GET /genres/:slug/:page?',
+      movies: 'GET /movies/:page',
+      movieDetail: 'GET /movies/:year/:month/:slug'
     }
   });
 });
 
 // ============================================
-// SAMEHADAKU ENDPOINTS
+// KITANIME ENDPOINTS
 // ============================================
 
 // HOME
-app.get('/samehadaku/home', async (req, res) => {
+app.get('/home', async (req, res) => {
   try {
-    console.log('🏠 Fetching Samehadaku home...');
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/home`, { 
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    console.log('🏠 Fetching home...');
+    const response = await axios.get(`${kitanimeBaseUrl}/home`, { 
+      timeout: 30000
     });
     
-    if (response.data && response.data.data) {
+    if (response.data && response.data.status === 'Ok') {
       return res.json({
         success: true,
         data: response.data.data,
-        source: 'samehadaku'
+        source: 'kitanime'
       });
     }
     
-    return res.json({ success: true, data: {}, source: 'samehadaku' });
+    return res.json({ success: true, data: {}, source: 'kitanime' });
   } catch (error) {
     console.error('❌ Error fetching home:', error.message);
     res.status(500).json({
@@ -101,80 +98,40 @@ app.get('/samehadaku/home', async (req, res) => {
   }
 });
 
-// RECENT
-app.get('/samehadaku/recent', async (req, res) => {
-  const { page = 1 } = req.query;
-  
-  try {
-    console.log(`📺 Fetching recent anime (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/recent`, {
-      params: { page },
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        data: response.data.data,
-        source: 'samehadaku'
-      });
-    }
-    
-    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
-  } catch (error) {
-    console.error('❌ Error fetching recent:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch recent',
-      message: error.message
-    });
-  }
-});
-
 // SEARCH
-app.get('/samehadaku/search', async (req, res) => {
-  const { q, page = 1 } = req.query;
+app.get('/search/:keyword', async (req, res) => {
+  const { keyword } = req.params;
   
-  if (!q || q.trim().length === 0) {
+  if (!keyword || keyword.trim().length === 0) {
     return res.status(400).json({
       success: false,
-      error: 'Query parameter (q) is required',
-      example: '/samehadaku/search?q=naruto&page=1'
+      error: 'Keyword parameter is required',
+      example: '/search/naruto'
     });
   }
   
   try {
-    const trimmedQuery = q.trim();
-    console.log(`🔍 Searching Samehadaku: ${trimmedQuery} (page: ${page})`);
-    
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/search`, {
-      params: { q: trimmedQuery, page },
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    console.log(`🔍 Searching: ${keyword}`);
+    const response = await axios.get(`${kitanimeBaseUrl}/search/${encodeURIComponent(keyword)}`, {
+      timeout: 30000
     });
     
-    if (response.data) {
-      const searchResults = response.data.data || [];
-      
+    if (response.data && response.data.status === 'Ok') {
       return res.json({
         success: true,
-        query: trimmedQuery,
-        page: parseInt(page),
-        count: searchResults.length,
-        data: searchResults,
-        source: 'samehadaku'
+        keyword: keyword,
+        count: response.data.data?.length || 0,
+        data: response.data.data || [],
+        source: 'kitanime'
       });
     }
     
     return res.json({
       success: true,
-      query: trimmedQuery,
-      page: parseInt(page),
+      keyword: keyword,
       count: 0,
       data: [],
-      source: 'samehadaku'
+      source: 'kitanime'
     });
   } catch (error) {
     console.error('❌ Error searching:', error.message);
@@ -182,308 +139,88 @@ app.get('/samehadaku/search', async (req, res) => {
       success: false,
       error: 'Failed to search',
       message: error.message,
-      query: q
+      keyword: keyword
     });
   }
 });
 
-// ONGOING
-app.get('/samehadaku/ongoing', async (req, res) => {
-  const { page = 1, order = 'popular' } = req.query;
+// ONGOING ANIME
+app.get('/ongoing-anime/:page?', async (req, res) => {
+  const { page = 1 } = req.params;
   
   try {
-    console.log(`📡 Fetching ongoing anime (page: ${page}, order: ${order})`);
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/ongoing`, {
-      params: { page, order },
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    console.log(`📡 Fetching ongoing anime (page: ${page})`);
+    const response = await axios.get(`${kitanimeBaseUrl}/ongoing-anime/${page}`, {
+      timeout: 30000
     });
     
-    if (response.data && response.data.data) {
+    if (response.data && response.data.status === 'Ok') {
       return res.json({
         success: true,
         page: parseInt(page),
-        order,
-        data: response.data.data,
-        source: 'samehadaku'
+        data: response.data.data || [],
+        pagination: response.data.pagination || null,
+        source: 'kitanime'
       });
     }
     
-    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
+    return res.json({ success: true, page: parseInt(page), data: [], source: 'kitanime' });
   } catch (error) {
     console.error('❌ Error fetching ongoing:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch ongoing',
+      error: 'Failed to fetch ongoing anime',
       message: error.message
     });
   }
 });
 
-// COMPLETED
-app.get('/samehadaku/completed', async (req, res) => {
-  const { page = 1, order = 'latest' } = req.query;
+// COMPLETE ANIME
+app.get('/complete-anime/:page?', async (req, res) => {
+  const { page = 1 } = req.params;
   
   try {
-    console.log(`📡 Fetching completed anime (page: ${page}, order: ${order})`);
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/completed`, {
-      params: { page, order },
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    console.log(`📡 Fetching completed anime (page: ${page})`);
+    const response = await axios.get(`${kitanimeBaseUrl}/complete-anime/${page}`, {
+      timeout: 30000
     });
     
-    if (response.data && response.data.data) {
+    if (response.data && response.data.status === 'Ok') {
       return res.json({
         success: true,
         page: parseInt(page),
-        order,
-        data: response.data.data,
-        source: 'samehadaku'
+        data: response.data.data || [],
+        pagination: response.data.pagination || null,
+        source: 'kitanime'
       });
     }
     
-    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
+    return res.json({ success: true, page: parseInt(page), data: [], source: 'kitanime' });
   } catch (error) {
     console.error('❌ Error fetching completed:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch completed',
-      message: error.message
-    });
-  }
-});
-
-// POPULAR
-app.get('/samehadaku/popular', async (req, res) => {
-  const { page = 1 } = req.query;
-  
-  try {
-    console.log(`🔥 Fetching popular anime (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/popular`, {
-      params: { page },
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        data: response.data.data,
-        source: 'samehadaku'
-      });
-    }
-    
-    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
-  } catch (error) {
-    console.error('❌ Error fetching popular:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch popular',
-      message: error.message
-    });
-  }
-});
-
-// MOVIES
-app.get('/samehadaku/movies', async (req, res) => {
-  const { page = 1, order = 'update' } = req.query;
-  
-  try {
-    console.log(`🎬 Fetching movies (page: ${page}, order: ${order})`);
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/movies`, {
-      params: { page, order },
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        order,
-        data: response.data.data,
-        source: 'samehadaku'
-      });
-    }
-    
-    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
-  } catch (error) {
-    console.error('❌ Error fetching movies:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch movies',
-      message: error.message
-    });
-  }
-});
-
-// LIST (ALL ANIME)
-app.get('/samehadaku/list', async (req, res) => {
-  try {
-    console.log('📚 Fetching anime list...');
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/list`, {
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        data: response.data.data,
-        source: 'samehadaku'
-      });
-    }
-    
-    return res.json({ success: true, data: [], source: 'samehadaku' });
-  } catch (error) {
-    console.error('❌ Error fetching list:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch list',
-      message: error.message
-    });
-  }
-});
-
-// SCHEDULE
-app.get('/samehadaku/schedule', async (req, res) => {
-  try {
-    console.log('📅 Fetching schedule...');
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/schedule`, {
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        data: response.data.data,
-        source: 'samehadaku'
-      });
-    }
-    
-    return res.json({ success: true, data: {}, source: 'samehadaku' });
-  } catch (error) {
-    console.error('❌ Error fetching schedule:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch schedule',
-      message: error.message
-    });
-  }
-});
-
-// GENRES
-app.get('/samehadaku/genres', async (req, res) => {
-  try {
-    console.log('📂 Fetching genres...');
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/genres`, {
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        data: response.data.data,
-        source: 'samehadaku'
-      });
-    }
-    
-    return res.json({ success: true, data: [], source: 'samehadaku' });
-  } catch (error) {
-    console.error('❌ Error fetching genres:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch genres',
-      message: error.message
-    });
-  }
-});
-
-// GENRE DETAIL
-app.get('/samehadaku/genres/:genreId', async (req, res) => {
-  const { genreId } = req.params;
-  const { page = 1 } = req.query;
-  
-  try {
-    console.log(`📂 Fetching genre: ${genreId} (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/genres/${genreId}`, {
-      params: { page },
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        genre: genreId,
-        page: parseInt(page),
-        data: response.data.data,
-        source: 'samehadaku'
-      });
-    }
-    
-    return res.json({ success: true, genre: genreId, page: parseInt(page), data: [], source: 'samehadaku' });
-  } catch (error) {
-    console.error('❌ Error fetching genre detail:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch genre detail',
-      message: error.message
-    });
-  }
-});
-
-// BATCH LIST
-app.get('/samehadaku/batch', async (req, res) => {
-  const { page = 1 } = req.query;
-  
-  try {
-    console.log(`📦 Fetching batch list (page: ${page})`);
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/batch`, {
-      params: { page },
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-    });
-    
-    if (response.data && response.data.data) {
-      return res.json({
-        success: true,
-        page: parseInt(page),
-        data: response.data.data,
-        source: 'samehadaku'
-      });
-    }
-    
-    return res.json({ success: true, page: parseInt(page), data: [], source: 'samehadaku' });
-  } catch (error) {
-    console.error('❌ Error fetching batch:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch batch',
+      error: 'Failed to fetch completed anime',
       message: error.message
     });
   }
 });
 
 // ANIME DETAIL
-app.get('/samehadaku/anime/:animeId', async (req, res) => {
-  const { animeId } = req.params;
+app.get('/anime/:slug', async (req, res) => {
+  const { slug } = req.params;
   
   try {
-    console.log(`📺 Fetching anime detail: ${animeId}`);
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/anime/${animeId}`, {
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    console.log(`📺 Fetching anime detail: ${slug}`);
+    const response = await axios.get(`${kitanimeBaseUrl}/anime/${slug}`, {
+      timeout: 30000
     });
     
-    if (response.data && response.data.data) {
+    if (response.data && response.data.status === 'Ok' && response.data.data) {
       return res.json({
         success: true,
         data: response.data.data,
-        source: 'samehadaku'
+        source: 'kitanime'
       });
     }
     
@@ -509,211 +246,82 @@ app.get('/samehadaku/anime/:animeId', async (req, res) => {
   }
 });
 
-// EPISODE WITH AGGRESSIVE SCRAPING
-app.get('/samehadaku/episode/:episodeId', async (req, res) => {
-  const { episodeId } = req.params;
+// ANIME EPISODES
+app.get('/anime/:slug/episodes', async (req, res) => {
+  const { slug } = req.params;
   
   try {
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`🎬 EPISODE REQUEST: ${episodeId}`);
-    console.log(`${'='.repeat(60)}`);
-    
-    // Try Sankavollerei first
-    const sankaUrl = `${sankaBaseUrl}/samehadaku/episode/${episodeId}`;
-    console.log(`📡 Fetching from Sankavollerei: ${sankaUrl}`);
-    
-    const response = await axios.get(sankaUrl, {
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    console.log(`📺 Fetching episodes for: ${slug}`);
+    const response = await axios.get(`${kitanimeBaseUrl}/anime/${slug}/episodes`, {
+      timeout: 30000
     });
     
-    if (response.data && response.data.data) {
-      const episodeData = response.data.data;
-      const streamingLinks = [];
-      
-      // Extract streaming servers
-      if (episodeData.server && episodeData.server.qualities) {
-        for (const qualityGroup of episodeData.server.qualities) {
-          const quality = qualityGroup.title || 'unknown';
-          
-          if (qualityGroup.serverList && Array.isArray(qualityGroup.serverList)) {
-            for (const server of qualityGroup.serverList) {
-              if (server.serverId) {
-                try {
-                  const serverUrl = `${sankaBaseUrl}/samehadaku/server/${server.serverId}`;
-                  const serverRes = await axios.get(serverUrl, { 
-                    timeout: 10000,
-                    httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-                  });
-                  
-                  if (serverRes.data && serverRes.data.data && serverRes.data.data.url) {
-                    let finalUrl = serverRes.data.data.url;
-                    
-                    // 🔥 CHECK IF URL NEEDS RESOLVING
-                    const needsResolve = finalUrl.includes('vercel.app') || 
-                                       finalUrl.includes('/proxy') ||
-                                       finalUrl.includes('api.wibufile.com/embed') ||
-                                       finalUrl.includes('api.wibufile.com/e/');
-                    
-                    if (needsResolve) {
-                      console.log(`   🔄 Resolving redirect for ${server.title}...`);
-                      const resolved = await scraper.resolveRedirectUrl(finalUrl);
-                      if (resolved) {
-                        finalUrl = resolved;
-                        console.log(`   ✅ Resolved to: ${finalUrl.substring(0, 60)}...`);
-                      }
-                    }
-                    
-                    streamingLinks.push({
-                      provider: server.title || 'Unknown',
-                      url: finalUrl,
-                      type: finalUrl.includes('.m3u8') ? 'hls' : finalUrl.includes('.mp4') ? 'mp4' : 'iframe',
-                      quality: quality,
-                      source: needsResolve ? 'resolved-redirect' : 'streaming-server'
-                    });
-                  }
-                } catch (serverErr) {
-                  console.log(`⚠️ Failed to fetch server ${server.serverId}`);
-                }
-              }
-            }
-          }
-        }
-      }
-      
-      // Extract download links with redirect resolution
-      if (episodeData.downloadUrl && episodeData.downloadUrl.formats) {
-        for (const format of episodeData.downloadUrl.formats) {
-          const formatTitle = format.title || 'Unknown Format';
-          
-          if (format.qualities && Array.isArray(format.qualities)) {
-            for (const qualityGroup of format.qualities) {
-              const quality = qualityGroup.title?.trim() || 'Auto';
-              
-              if (qualityGroup.urls && Array.isArray(qualityGroup.urls)) {
-                for (const urlData of qualityGroup.urls) {
-                  const provider = urlData.title?.trim() || 'Unknown';
-                  let url = urlData.url;
-                  
-                  if (url && url.trim().length > 0) {
-                    // 🔥 CHECK IF URL NEEDS RESOLVING
-                    const needsResolve = url.includes('vercel.app') || 
-                                       url.includes('/proxy') ||
-                                       url.includes('api.wibufile.com/embed') ||
-                                       url.includes('api.wibufile.com/e/');
-                    
-                    if (needsResolve) {
-                      console.log(`   🔄 Resolving download link: ${provider} ${quality}...`);
-                      const resolved = await scraper.resolveRedirectUrl(url);
-                      if (resolved) {
-                        url = resolved;
-                        console.log(`   ✅ Resolved to: ${url.substring(0, 60)}...`);
-                      }
-                    }
-                    
-                    let linkType = 'download';
-                    let isDirectStream = false;
-                    
-                    if (url.includes('.mp4') || url.includes('.mkv') || 
-                        url.includes('googlevideo.com') || url.includes('filedon.co') ||
-                        url.includes('pixeldrain.com') || url.includes('gofile.io') ||
-                        url.includes('wibufile.com')) {
-                      linkType = 'mp4';
-                      isDirectStream = true;
-                    } else if (url.includes('.m3u8')) {
-                      linkType = 'hls';
-                      isDirectStream = true;
-                    }
-                    
-                    if (isDirectStream || provider.toLowerCase().includes('pixeldrain') ||
-                        provider.toLowerCase().includes('filedon') || 
-                        provider.toLowerCase().includes('gofile') ||
-                        provider.toLowerCase().includes('wibufile')) {
-                      streamingLinks.push({
-                        provider: `${provider} (${formatTitle})`,
-                        url: url,
-                        type: linkType,
-                        quality: quality,
-                        source: needsResolve ? 'resolved-redirect' : 'download-link',
-                        format: formatTitle
-                      });
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-      
-      // If we have links from API, try aggressive scraping for more
-      if (streamingLinks.length > 0) {
-        console.log(`✅ Found ${streamingLinks.length} links from API (with resolving)`);
-        
-        // Try aggressive scraping for additional links
-        try {
-          const scrapedLinks = await scraper.getStreamingLink(episodeId);
-          if (scrapedLinks && scrapedLinks.length > 0) {
-            console.log(`✅ Scraped additional ${scrapedLinks.length} links`);
-            scrapedLinks.forEach(link => {
-              // Avoid duplicates
-              if (!streamingLinks.some(sl => sl.url === link.url)) {
-                streamingLinks.push(link);
-              }
-            });
-          }
-        } catch (scrapeError) {
-          console.log(`⚠️ Scraping failed: ${scrapeError.message}`);
-        }
-      } else {
-        // No API links, rely on aggressive scraping
-        console.log(`⚠️ No API links, using aggressive scraping...`);
-        const scrapedLinks = await scraper.getStreamingLink(episodeId);
-        streamingLinks.push(...(scrapedLinks || []));
-      }
-      
-      // Sort by quality
-      streamingLinks.sort((a, b) => {
-        const qualityOrder = { '1080p': 4, '720p': 3, '480p': 2, '360p': 1 };
-        const aQuality = qualityOrder[a.quality?.toLowerCase()] || 0;
-        const bQuality = qualityOrder[b.quality?.toLowerCase()] || 0;
-        return bQuality - aQuality;
-      });
-      
-      console.log(`\n✅ TOTAL: ${streamingLinks.length} streaming links (after redirect resolving)`);
-      console.log(`${'='.repeat(60)}\n`);
-      
-      // Debug log top 5 links
-      if (streamingLinks.length > 0) {
-        console.log('🎉 TOP 5 RESOLVED LINKS:');
-        streamingLinks.slice(0, 5).forEach((link, i) => {
-          console.log(`   ${i + 1}. ${link.provider} - ${link.quality} (${link.type}) - ${link.source}`);
-          console.log(`      ${link.url.substring(0, 80)}...`);
-        });
-      }
-      
+    if (response.data && response.data.status === 'Ok') {
       return res.json({
         success: true,
-        count: streamingLinks.length,
-        data: streamingLinks,
-        episodeInfo: {
-          title: episodeData.title,
-          animeId: episodeData.animeId,
-          poster: episodeData.poster,
-        },
-        source: 'samehadaku-enhanced-with-redirect-resolver'
+        data: response.data.data || [],
+        source: 'kitanime'
       });
     }
     
-    // Fallback to pure scraping
-    console.log('⚠️ API failed, using pure scraping...');
-    const scrapedLinks = await scraper.getStreamingLink(episodeId);
+    return res.status(404).json({
+      success: false,
+      error: 'Episodes not found'
+    });
+  } catch (error) {
+    console.error('❌ Error fetching episodes:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch episodes',
+      message: error.message
+    });
+  }
+});
+
+// EPISODE BY SLUG WITH AGGRESSIVE SCRAPING
+app.get('/episode/:slug', async (req, res) => {
+  const { slug } = req.params;
+  
+  try {
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`🎬 EPISODE REQUEST: ${slug}`);
+    console.log(`${'='.repeat(60)}`);
     
-    return res.json({
-      success: true,
-      count: scrapedLinks?.length || 0,
-      data: scrapedLinks || [],
-      source: 'scraper-only'
+    // Fetch from API first
+    console.log(`📡 Fetching from Kitanime API...`);
+    const response = await axios.get(`${kitanimeBaseUrl}/episode/${slug}`, {
+      timeout: 30000
+    });
+    
+    if (response.data && response.data.status === 'Ok' && response.data.data) {
+      const episodeData = response.data.data;
+      
+      // 🔥 AGGRESSIVE SCRAPING
+      console.log(`\n🔥 Starting aggressive scraping...`);
+      const scrapedLinks = await scraper.getStreamingLink(slug);
+      
+      console.log(`\n✅ TOTAL: ${scrapedLinks.length} streaming links`);
+      console.log(`${'='.repeat(60)}\n`);
+      
+      return res.json({
+        success: true,
+        count: scrapedLinks.length,
+        data: scrapedLinks,
+        episodeInfo: {
+          episode: episodeData.episode,
+          anime: episodeData.anime,
+          has_next_episode: episodeData.has_next_episode,
+          next_episode: episodeData.next_episode,
+          has_previous_episode: episodeData.has_previous_episode,
+          previous_episode: episodeData.previous_episode
+        },
+        source: 'kitanime-aggressive-scraper'
+      });
+    }
+    
+    return res.status(404).json({
+      success: false,
+      error: 'Episode not found'
     });
     
   } catch (error) {
@@ -727,22 +335,80 @@ app.get('/samehadaku/episode/:episodeId', async (req, res) => {
   }
 });
 
-// BATCH DETAIL
-app.get('/samehadaku/batch/:batchId', async (req, res) => {
-  const { batchId } = req.params;
+// EPISODE BY NUMBER
+app.get('/anime/:slug/episodes/:episode', async (req, res) => {
+  const { slug, episode } = req.params;
   
   try {
-    console.log(`📦 Fetching batch detail: ${batchId}`);
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/batch/${batchId}`, {
-      timeout: 30000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    console.log(`📺 Fetching episode ${episode} of ${slug}`);
+    const response = await axios.get(`${kitanimeBaseUrl}/anime/${slug}/episodes/${episode}`, {
+      timeout: 30000
     });
     
-    if (response.data && response.data.data) {
+    if (response.data && response.data.status === 'Ok' && response.data.data) {
+      const episodeData = response.data.data;
+      
+      // Get episode slug for scraping
+      let episodeSlug = null;
+      if (episodeData.anime && episodeData.anime.slug) {
+        episodeSlug = `${episodeData.anime.slug}-episode-${episode}`;
+      }
+      
+      // 🔥 AGGRESSIVE SCRAPING
+      let scrapedLinks = [];
+      if (episodeSlug) {
+        console.log(`\n🔥 Starting aggressive scraping for: ${episodeSlug}`);
+        scrapedLinks = await scraper.getStreamingLink(episodeSlug);
+      }
+      
+      console.log(`\n✅ TOTAL: ${scrapedLinks.length} streaming links`);
+      
+      return res.json({
+        success: true,
+        count: scrapedLinks.length,
+        data: scrapedLinks,
+        episodeInfo: {
+          episode: episodeData.episode,
+          anime: episodeData.anime,
+          has_next_episode: episodeData.has_next_episode,
+          next_episode: episodeData.next_episode,
+          has_previous_episode: episodeData.has_previous_episode,
+          previous_episode: episodeData.previous_episode
+        },
+        source: 'kitanime-aggressive-scraper'
+      });
+    }
+    
+    return res.status(404).json({
+      success: false,
+      error: 'Episode not found'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching episode:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch episode',
+      message: error.message
+    });
+  }
+});
+
+// BATCH BY SLUG
+app.get('/batch/:slug', async (req, res) => {
+  const { slug } = req.params;
+  
+  try {
+    console.log(`📦 Fetching batch: ${slug}`);
+    const response = await axios.get(`${kitanimeBaseUrl}/batch/${slug}`, {
+      timeout: 30000
+    });
+    
+    if (response.data && response.data.status === 'Ok') {
       return res.json({
         success: true,
         data: response.data.data,
-        source: 'samehadaku'
+        source: 'kitanime'
       });
     }
     
@@ -751,43 +417,188 @@ app.get('/samehadaku/batch/:batchId', async (req, res) => {
       error: 'Batch not found'
     });
   } catch (error) {
-    console.error('❌ Error fetching batch detail:', error.message);
+    console.error('❌ Error fetching batch:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch batch detail',
+      error: 'Failed to fetch batch',
       message: error.message
     });
   }
 });
 
-// SERVER
-app.get('/samehadaku/server/:serverId', async (req, res) => {
-  const { serverId } = req.params;
+// ANIME BATCH
+app.get('/anime/:slug/batch', async (req, res) => {
+  const { slug } = req.params;
   
   try {
-    console.log(`🔗 Fetching server: ${serverId}`);
-    const response = await axios.get(`${sankaBaseUrl}/samehadaku/server/${serverId}`, {
-      timeout: 15000,
-      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+    console.log(`📦 Fetching batch for anime: ${slug}`);
+    const response = await axios.get(`${kitanimeBaseUrl}/anime/${slug}/batch`, {
+      timeout: 30000
     });
     
-    if (response.data && response.data.data) {
+    if (response.data && response.data.status === 'Ok') {
       return res.json({
         success: true,
         data: response.data.data,
-        source: 'samehadaku'
+        source: 'kitanime'
       });
     }
     
     return res.status(404).json({
       success: false,
-      error: 'Server not found'
+      error: 'Batch not found for this anime'
     });
   } catch (error) {
-    console.error('❌ Error fetching server:', error.message);
+    console.error('❌ Error fetching anime batch:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch server',
+      error: 'Failed to fetch anime batch',
+      message: error.message
+    });
+  }
+});
+
+// GENRES LIST
+app.get('/genres', async (req, res) => {
+  try {
+    console.log('📂 Fetching genres...');
+    const response = await axios.get(`${kitanimeBaseUrl}/genres`, {
+      timeout: 30000
+    });
+    
+    if (response.data && response.data.status === 'Ok') {
+      return res.json({
+        success: true,
+        data: response.data.data || [],
+        source: 'kitanime'
+      });
+    }
+    
+    return res.json({ success: true, data: [], source: 'kitanime' });
+  } catch (error) {
+    console.error('❌ Error fetching genres:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch genres',
+      message: error.message
+    });
+  }
+});
+
+// GENRE DETAIL
+app.get('/genres/:slug/:page?', async (req, res) => {
+  const { slug, page = 1 } = req.params;
+  
+  try {
+    console.log(`📂 Fetching genre: ${slug} (page: ${page})`);
+    const response = await axios.get(`${kitanimeBaseUrl}/genres/${slug}/${page}`, {
+      timeout: 30000
+    });
+    
+    if (response.data && response.data.status === 'Ok') {
+      return res.json({
+        success: true,
+        genre: slug,
+        page: parseInt(page),
+        data: response.data.data || {},
+        source: 'kitanime'
+      });
+    }
+    
+    return res.json({ 
+      success: true, 
+      genre: slug, 
+      page: parseInt(page), 
+      data: {}, 
+      source: 'kitanime' 
+    });
+  } catch (error) {
+    console.error('❌ Error fetching genre detail:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch genre detail',
+      message: error.message
+    });
+  }
+});
+
+// MOVIES LIST
+app.get('/movies/:page', async (req, res) => {
+  const { page } = req.params;
+  
+  if (!parseInt(page) || parseInt(page) < 1) {
+    return res.status(400).json({
+      success: false,
+      error: 'Page parameter must be a number greater than 0'
+    });
+  }
+  
+  try {
+    console.log(`🎬 Fetching movies (page: ${page})`);
+    const response = await axios.get(`${kitanimeBaseUrl}/movies/${page}`, {
+      timeout: 30000
+    });
+    
+    if (response.data && response.data.status === 'Ok') {
+      return res.json({
+        success: true,
+        page: parseInt(page),
+        data: response.data.data || {},
+        source: 'kitanime'
+      });
+    }
+    
+    return res.json({ 
+      success: true, 
+      page: parseInt(page), 
+      data: {}, 
+      source: 'kitanime' 
+    });
+  } catch (error) {
+    console.error('❌ Error fetching movies:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch movies',
+      message: error.message
+    });
+  }
+});
+
+// MOVIE DETAIL
+app.get('/movies/:year/:month/:slug', async (req, res) => {
+  const { year, month, slug } = req.params;
+  
+  try {
+    console.log(`🎬 Fetching movie: ${year}/${month}/${slug}`);
+    const response = await axios.get(`${kitanimeBaseUrl}/movies/${year}/${month}/${slug}`, {
+      timeout: 30000
+    });
+    
+    if (response.data && response.data.status === 'Ok' && response.data.data) {
+      return res.json({
+        success: true,
+        data: response.data.data,
+        source: 'kitanime'
+      });
+    }
+    
+    return res.status(404).json({
+      success: false,
+      error: 'Movie not found'
+    });
+  } catch (error) {
+    console.error('❌ Error fetching movie detail:', error.message);
+    
+    if (error.response && error.response.status === 404) {
+      return res.status(404).json({
+        success: false,
+        error: 'Movie not found'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch movie detail',
       message: error.message
     });
   }
@@ -841,15 +652,15 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║  🎌 SAMEHADAKU COMPLETE API v1.0.0                        ║
+║  🎌 KITANIME COMPLETE API v2.0.0                          ║
 ╠════════════════════════════════════════════════════════════╣
 ║  📡 Port: ${PORT.toString().padEnd(48)} ║
-║  🔗 Source: Sankavollerei + Aggressive Scraping           ║
-║  🔒 HTTPS: Enabled (rejectUnauthorized: false)            ║
+║  🔗 Source: Kitanime API + Aggressive Scraping            ║
+║  🚀 Puppeteer: Enhanced video extraction                  ║
 ╠════════════════════════════════════════════════════════════╣
-║  🚀 All Samehadaku endpoints ready                        ║
-║  ⚡ Aggressive video extraction enabled                   ║
-║  📥 Download links supported                              ║
+║  ⚡ All Kitanime/Otakudesu endpoints ready                ║
+║  🔥 Aggressive blogger extraction enabled                 ║
+║  📥 Multiple quality support                              ║
 ╚════════════════════════════════════════════════════════════╝
   `);
   console.log('💡 Visit http://localhost:' + PORT + ' for documentation\n');

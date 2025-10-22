@@ -1,7 +1,7 @@
 {
-  "name": "anime_app_backend",
+  "name": "kitanime-api-aggressive",
   "version": "2.0.0",
-  "description": "Backend for Anime Streaming App - Web Scraping Otakudesu with Puppeteer Integration",
+  "description": "Kitanime API with Aggressive Scraping - Puppeteer Enhanced",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,12 +11,13 @@
   "keywords": [
     "anime",
     "scraper",
+    "kitanime",
     "otakudesu",
     "puppeteer",
     "streaming",
     "video-extraction",
     "blogger",
-    "desustream"
+    "aggressive-scraping"
   ],
   "author": "",
   "license": "ISC",
@@ -35,7 +36,7 @@
     "npm": ">=10.x"
   },
   "puppeteer": {
-    "skipDownload": true
+    "skipDownload": false
   },
   "overrides": {
     "undici": "5.28.4"
