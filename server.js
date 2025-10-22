@@ -1,4 +1,4 @@
-// server.js - RAILWAY BACKEND WITH SCRAPER
+// server.js - RAILWAY BACKEND WITH SCRAPER - FIXED
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -10,7 +10,6 @@ const PORT = process.env.PORT || 5000;
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// Kitanime API base
 const KITANIME_API = 'https://kitanime-api.vercel.app/v1';
 
 // ============================================
@@ -136,7 +135,6 @@ async function scrapeDesustream(url) {
     const $ = cheerio.load(response.data);
     const videos = [];
 
-    // Look for video sources
     $('video source, iframe').each((i, el) => {
       const src = $(el).attr('src');
       if (src && src.includes('http')) {
@@ -169,7 +167,6 @@ app.get('/episode/:slug', async (req, res) => {
     const { slug } = req.params;
     console.log(`\n🎬 EPISODE REQUEST: ${slug}`);
     
-    // Get data from Kitanime API
     console.log('📡 Fetching from Kitanime API...');
     const response = await axios.get(`${KITANIME_API}/episode/${slug}`, {
       timeout: 30000
@@ -185,7 +182,6 @@ app.get('/episode/:slug', async (req, res) => {
     const episodeData = response.data.data;
     const allLinks = [];
 
-    // ✅ Extract API links (may be redirects)
     console.log('📊 Processing API links...');
     
     if (episodeData.stream_url) {
@@ -214,7 +210,7 @@ app.get('/episode/:slug', async (req, res) => {
       });
     }
 
- {
+    if (episodeData.download_urls && episodeData.download_urls.mp4) {
       for (const resGroup of episodeData.download_urls.mp4) {
         const resolution = resGroup.resolution || 'auto';
         if (resGroup.urls) {
@@ -240,11 +236,11 @@ app.get('/episode/:slug', async (req, res) => {
     console.log('\n🔥 RESOLVING REDIRECTS...');
     const resolvedLinks = [];
 
-    for (const link of allLinks.slice(0, 10)) { // Limit to 10 to avoid timeout
+    for (const link of allLinks.slice(0, 10)) {
       try {
         const url = link.url.toLowerCase();
         
-        // Direct playable URLs - no need to resolve
+        // Direct playable URLs
         if (url.includes('googlevideo.com') || 
             url.includes('videoplayback') ||
             url.endsWith('.mp4') ||
@@ -261,7 +257,7 @@ app.get('/episode/:slug', async (req, res) => {
             bloggerVideos.forEach(video => {
               resolvedLinks.push({
                 provider: `${link.provider} (Resolved)`,
-                url: video.url,
+                url: video.url, // ✅ FULL URL FROM BLOGGER
                 type: video.type,
                 quality: video.quality,
                 source: 'blogger-resolved'
@@ -278,7 +274,7 @@ app.get('/episode/:slug', async (req, res) => {
             desuVideos.forEach(video => {
               resolvedLinks.push({
                 provider: `${link.provider} (Resolved)`,
-                url: video.url,
+                url: video.url, // ✅ FULL URL
                 type: video.type,
                 quality: video.quality,
                 source: 'desustream-resolved'
@@ -302,12 +298,11 @@ app.get('/episode/:slug', async (req, res) => {
             console.log(`   ✅ Resolved redirect: ${link.provider}`);
             resolvedLinks.push({
               ...link,
-              url: finalUrl,
+              url: finalUrl, // ✅ FULL RESOLVED URL
               source: 'railway-resolved'
             });
           }
         } catch (e) {
-          // Keep original if resolve fails
           resolvedLinks.push(link);
         }
 
@@ -333,7 +328,7 @@ app.get('/episode/:slug', async (req, res) => {
                       episodeData.stream_url;
     
     const streamList = {};
-    const downloadUrls = { mp4: [], mkv: [] }; // Keep mkv empty
+    const downloadUrls = { mp4: [], mkv: [] };
 
     // Group MP4 by quality
     const mp4ByQuality = {};
@@ -360,6 +355,12 @@ app.get('/episode/:slug', async (req, res) => {
     console.log(`   MP4: ${uniqueLinks.filter(l => l.type === 'mp4').length}`);
     console.log(`   HLS: ${uniqueLinks.filter(l => l.type === 'hls').length}`);
     console.log(`   Total resolved: ${uniqueLinks.length}`);
+
+    // ✅ DEBUG: Print first URL
+    if (uniqueLinks.length > 0) {
+      console.log(`\n📺 FIRST URL (for debugging):`);
+      console.log(`   ${uniqueLinks[0].url.substring(0, 100)}...`);
+    }
 
     res.json({
       status: 'Ok',
@@ -417,17 +418,16 @@ proxyEndpoints.forEach(endpoint => {
   });
 });
 
-// Health check
 app.get('/', (req, res) => {
   res.json({
     status: 'Online',
     service: 'Railway Kitanime Backend with Scraper',
-    version: '2.0.0',
+    version: '2.0.1',
     features: [
       'Blogger video extraction',
       'Desustream resolver',
       'Redirect resolution',
-      'MP4 only (MKV excluded for Flutter compatibility)'
+      'MP4 only (MKV excluded)'
     ]
   });
 });
@@ -436,5 +436,5 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Railway Backend running on port ${PORT}`);
   console.log(`📡 Proxying to: ${KITANIME_API}`);
   console.log(`🔥 Scraping enabled for: Blogger, Desustream`);
-  console.log(`⚠️  MKV links excluded (Flutter video_player limitation)\n`);
+  console.log(`⚠️  MKV links excluded\n`);
 });
