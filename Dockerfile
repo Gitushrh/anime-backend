@@ -6,10 +6,10 @@ FROM node:20-alpine AS deps
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json* ./
 
-# Install dependencies (use lock file)
-RUN npm ci --production --ignore-scripts && \
+# Install dependencies - use npm install instead of ci for flexibility
+RUN npm install --production --ignore-scripts && \
     npm cache clean --force
 
 # ============================================
@@ -42,7 +42,6 @@ COPY --from=deps /app/package*.json ./
 
 # Copy application source
 COPY server.js ./
-COPY utils ./utils
 
 # Expose port
 EXPOSE 5000
