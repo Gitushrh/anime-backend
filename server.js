@@ -1,4 +1,4 @@
-// server.js - RAILWAY BACKEND WITH GOOGLE VIDEO PROXY
+// server.js - RAILWAY BACKEND FOR SANKAVOLLEREI API
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-const KITANIME_API = 'https://kitanime-api.vercel.app/v1';
+const SANKAVOLLEREI_API = 'https://www.sankavollerei.com/anime';
 
 // ============================================
 // 🔥 GOOGLE VIDEO PROXY - BYPASS CORS
@@ -37,9 +37,6 @@ app.get('/proxy/video', async (req, res) => {
     if (videoUrl.includes('googlevideo.com') || videoUrl.includes('blogger.com')) {
       headers['Referer'] = 'https://www.blogger.com/';
       headers['Origin'] = 'https://www.blogger.com';
-    } else if (videoUrl.includes('otakufiles.net')) {
-      headers['Referer'] = 'https://otakudesu.cloud/';
-      headers['Origin'] = 'https://otakudesu.cloud';
     }
 
     if (req.headers.range) {
@@ -57,7 +54,6 @@ app.get('/proxy/video', async (req, res) => {
     });
 
     console.log(`   Status: ${response.status}`);
-    console.log(`   Content-Type: ${response.headers['content-type']}`);
     console.log(`   ✅ Proxying video stream`);
 
     res.set({
@@ -76,13 +72,6 @@ app.get('/proxy/video', async (req, res) => {
     }
 
     response.data.pipe(res);
-
-    response.data.on('error', (err) => {
-      console.error('❌ Stream error:', err.message);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Stream error' });
-      }
-    });
 
   } catch (error) {
     console.error('❌ Proxy error:', error.message);
@@ -114,7 +103,7 @@ async function scrapeBlogger(bloggerUrl, baseUrl) {
       timeout: 20000,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://otakudesu.cloud/',
+        'Referer': 'https://www.sankavollerei.com/',
         'Accept': 'text/html,*/*',
       },
       maxRedirects: 5,
@@ -139,7 +128,6 @@ async function scrapeBlogger(bloggerUrl, baseUrl) {
         const formatNote = match[2];
         
         if (videoUrl.includes('videoplayback') || videoUrl.includes('googlevideo')) {
-          // 🔥 PROXY URL
           const proxiedUrl = `${baseUrl}/proxy/video?url=${encodeURIComponent(videoUrl)}`;
           
           videos.push({
@@ -204,10 +192,6 @@ async function scrapeBlogger(bloggerUrl, baseUrl) {
       }
     }
 
-    if (videos.length === 0) {
-      console.log(`   ❌ No videos found in HTML`);
-    }
-
     return videos;
     
   } catch (error) {
@@ -229,26 +213,26 @@ app.get('/episode/:slug', async (req, res) => {
     
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     
-    console.log('📡 Step 1: Fetching from Kitanime API...');
-    const apiResponse = await axios.get(`${KITANIME_API}/episode/${slug}`, {
+    console.log('📡 Step 1: Fetching from Sankavollerei API...');
+    const apiResponse = await axios.get(`${SANKAVOLLEREI_API}/episode/${slug}`, {
       timeout: 30000,
       validateStatus: (status) => status < 500,
     });
 
-    if (!apiResponse.data || apiResponse.data.status !== 'Ok') {
+    if (!apiResponse.data) {
       return res.status(404).json({
         status: 'Error',
-        message: 'Episode not found in Kitanime API'
+        message: 'Episode not found'
       });
     }
 
-    const episodeData = apiResponse.data.data;
-    console.log('✅ Kitanime API response received');
+    const episodeData = apiResponse.data;
+    console.log('✅ Sankavollerei API response received');
 
     const resolvedLinks = [];
 
-    // 🔥 Step 2: Scrape ALL Blogger URLs
-    console.log('\n🔥 Step 2: Scraping Blogger URLs...');
+    // 🔥 Step 2: Extract stream_url dan stream_list
+    console.log('\n🔥 Step 2: Processing stream URLs...');
     
     const bloggerUrls = new Set();
     
@@ -257,48 +241,7 @@ app.get('/episode/:slug', async (req, res) => {
       const urlLower = episodeData.stream_url.toLowerCase();
       if (urlLower.includes('blogger.com') || urlLower.includes('blogspot.com')) {
         bloggerUrls.add(episodeData.stream_url);
-      }
-    }
-    
-    // Quality variants
-    if (episodeData.steramList) {
-      for (const [quality, url] of Object.entries(episodeData.steramList)) {
-        if (url && url.startsWith('http')) {
-          const urlLower = url.toLowerCase();
-          if (urlLower.includes('blogger.com') || urlLower.includes('blogspot.com')) {
-            bloggerUrls.add(url);
-          }
-        }
-      }
-    }
-
-    console.log(`   Found ${bloggerUrls.size} Blogger URLs to scrape`);
-
-    // Scrape each Blogger URL
-    for (const bloggerUrl of bloggerUrls) {
-      const scrapedVideos = await scrapeBlogger(bloggerUrl, baseUrl);
-      
-      if (scrapedVideos.length > 0) {
-        scrapedVideos.forEach(video => {
-          resolvedLinks.push({
-            provider: `Blogger (${video.quality})`,
-            url: video.url, // Already proxied
-            type: video.type,
-            quality: video.quality,
-            source: video.source,
-          });
-        });
-      }
-    }
-
-    console.log(`\n📊 Scraping Results: ${resolvedLinks.length} proxied links`);
-
-    // 🔥 Step 3: Proxy non-Blogger Google Video URLs
-    console.log('\n🔥 Step 3: Proxying other Google Video URLs...');
-    
-    if (episodeData.stream_url) {
-      const urlLower = episodeData.stream_url.toLowerCase();
-      if (urlLower.includes('googlevideo.com')) {
+      } else if (urlLower.includes('googlevideo.com')) {
         const proxiedUrl = `${baseUrl}/proxy/video?url=${encodeURIComponent(episodeData.stream_url)}`;
         resolvedLinks.push({
           provider: 'Main Stream (Proxied)',
@@ -307,16 +250,17 @@ app.get('/episode/:slug', async (req, res) => {
           quality: 'auto',
           source: 'api-main-proxied',
         });
-        console.log(`   ✅ Proxied main stream`);
       }
     }
-
-    if (episodeData.steramList) {
-      for (const [quality, url] of Object.entries(episodeData.steramList)) {
+    
+    // Stream list quality variants
+    if (episodeData.stream_list) {
+      for (const [quality, url] of Object.entries(episodeData.stream_list)) {
         if (url && url.startsWith('http')) {
           const urlLower = url.toLowerCase();
-          if (urlLower.includes('googlevideo.com') && 
-              !bloggerUrls.has(url)) { // Not already scraped as Blogger
+          if (urlLower.includes('blogger.com') || urlLower.includes('blogspot.com')) {
+            bloggerUrls.add(url);
+          } else if (urlLower.includes('googlevideo.com')) {
             const proxiedUrl = `${baseUrl}/proxy/video?url=${encodeURIComponent(url)}`;
             resolvedLinks.push({
               provider: `Quality ${quality} (Proxied)`,
@@ -325,7 +269,66 @@ app.get('/episode/:slug', async (req, res) => {
               quality: quality,
               source: 'api-quality-proxied',
             });
-            console.log(`   ✅ Proxied ${quality}`);
+          }
+        }
+      }
+    }
+
+    console.log(`   Found ${bloggerUrls.size} Blogger URLs to scrape`);
+
+    // 🔥 Step 3: Scrape Blogger URLs
+    console.log('\n🔥 Step 3: Scraping Blogger URLs...');
+    for (const bloggerUrl of bloggerUrls) {
+      const scrapedVideos = await scrapeBlogger(bloggerUrl, baseUrl);
+      
+      if (scrapedVideos.length > 0) {
+        scrapedVideos.forEach(video => {
+          resolvedLinks.push({
+            provider: `Blogger (${video.quality})`,
+            url: video.url,
+            type: video.type,
+            quality: video.quality,
+            source: video.source,
+          });
+        });
+      }
+    }
+
+    // 🔥 Step 4: Process download_links if available
+    if (episodeData.download_links) {
+      console.log('\n🔥 Step 4: Processing download links...');
+      
+      if (episodeData.download_links.mp4) {
+        for (const resGroup of episodeData.download_links.mp4) {
+          const resolution = resGroup.resolution || 'auto';
+          if (resGroup.urls && Array.isArray(resGroup.urls)) {
+            for (const urlData of resGroup.urls) {
+              if (urlData.url && urlData.url.startsWith('http')) {
+                const urlLower = urlData.url.toLowerCase();
+                
+                if (urlLower.includes('blogger.com') || urlLower.includes('blogspot.com')) {
+                  const scrapedVideos = await scrapeBlogger(urlData.url, baseUrl);
+                  scrapedVideos.forEach(video => {
+                    resolvedLinks.push({
+                      provider: `${urlData.provider || 'Download'} (${video.quality})`,
+                      url: video.url,
+                      type: video.type,
+                      quality: video.quality,
+                      source: 'download-blogger-proxied',
+                    });
+                  });
+                } else if (urlLower.includes('googlevideo.com')) {
+                  const proxiedUrl = `${baseUrl}/proxy/video?url=${encodeURIComponent(urlData.url)}`;
+                  resolvedLinks.push({
+                    provider: `${urlData.provider || 'Download'} (${resolution})`,
+                    url: proxiedUrl,
+                    type: 'mp4',
+                    quality: resolution,
+                    source: 'download-mp4-proxied',
+                  });
+                }
+              }
+            }
           }
         }
       }
@@ -336,7 +339,6 @@ app.get('/episode/:slug', async (req, res) => {
     const seenUrls = new Set();
     
     for (const link of resolvedLinks) {
-      // Extract original URL from proxy
       const originalUrl = link.url.includes('/proxy/video?url=') 
         ? decodeURIComponent(link.url.split('url=')[1])
         : link.url;
@@ -354,11 +356,9 @@ app.get('/episode/:slug', async (req, res) => {
       uniqueLinks.slice(0, 5).forEach((link, i) => {
         console.log(`   ${i + 1}. ${link.provider} - ${link.quality}`);
       });
-    } else {
-      console.log(`⚠️ WARNING: No links found!`);
     }
 
-    // Build response
+    // Build response (keep original Sankavollerei format + add resolved_links)
     const streamUrl = uniqueLinks.find(l => l.type === 'mp4')?.url || episodeData.stream_url;
     
     const streamList = {};
@@ -369,22 +369,19 @@ app.get('/episode/:slug', async (req, res) => {
     });
 
     res.json({
-      status: 'Ok',
-      data: {
-        stream_url: streamUrl,
-        steramList: streamList,
-        resolved_links: uniqueLinks,
-        _debug: {
-          original_stream_url: episodeData.stream_url,
-          blogger_urls_scraped: bloggerUrls.size,
-          total_links_found: uniqueLinks.length,
-        }
+      ...episodeData,
+      stream_url: streamUrl,
+      stream_list: Object.keys(streamList).length > 0 ? streamList : episodeData.stream_list,
+      resolved_links: uniqueLinks,
+      _debug: {
+        original_stream_url: episodeData.stream_url,
+        blogger_urls_scraped: bloggerUrls.size,
+        total_links_found: uniqueLinks.length,
       }
     });
 
   } catch (error) {
     console.error('\n❌ EPISODE ERROR:', error.message);
-    console.error(error.stack);
     res.status(500).json({
       status: 'Error',
       message: error.message
@@ -393,30 +390,35 @@ app.get('/episode/:slug', async (req, res) => {
 });
 
 // ============================================
-// 🔄 PROXY OTHER KITANIME ENDPOINTS
+// 🔄 PROXY OTHER SANKAVOLLEREI ENDPOINTS
 // ============================================
 
 const proxyEndpoints = [
   '/home',
-  '/ongoing-anime/:page?',
-  '/complete-anime/:page?',
-  '/movies/:page?',
-  '/search/:keyword',
+  '/schedule',
   '/anime/:slug',
-  '/genres',
-  '/genres/:slug/:page?',
-  '/batch/:page',
+  '/complete-anime/:page?',
+  '/ongoing-anime',
+  '/genre',
+  '/genre/:slug',
+  '/search/:keyword',
   '/batch/:slug',
+  '/server/:serverId',
+  '/unlimited',
 ];
 
 proxyEndpoints.forEach(endpoint => {
   app.get(endpoint, async (req, res) => {
     try {
       const path = req.path;
-      console.log(`\n📡 Proxy: ${path}`);
+      const queryString = req.url.split('?')[1] || '';
+      const fullPath = queryString ? `${path}?${queryString}` : path;
       
-      const response = await axios.get(`${KITANIME_API}${path}`, {
-        timeout: 30000
+      console.log(`\n📡 Proxy: ${fullPath}`);
+      
+      const response = await axios.get(`${SANKAVOLLEREI_API}${fullPath}`, {
+        timeout: 30000,
+        validateStatus: (status) => status < 500,
       });
       
       res.json(response.data);
@@ -437,26 +439,47 @@ proxyEndpoints.forEach(endpoint => {
 app.get('/', (req, res) => {
   res.json({
     status: 'Online',
-    service: '🔥 Railway Anime Backend with Google Video Proxy',
-    version: '4.0.0',
+    service: '🔥 Railway Anime Backend - Sankavollerei API with Google Video Proxy',
+    version: '1.0.0',
+    base_api: 'https://www.sankavollerei.com/anime',
     features: [
       '✅ Google Video CORS bypass proxy',
       '✅ Aggressive Blogger video scraping',
-      '✅ All URLs automatically proxied',
+      '✅ All video URLs automatically proxied',
       '✅ Range request support (video seeking)',
-      '✅ Multiple quality variants',
+      '✅ Multiple quality variants extraction',
+      '✅ MP4 + HLS streaming support',
     ],
     endpoints: {
-      '/proxy/video?url=<VIDEO_URL>': 'Proxy any video URL (CORS bypass)',
-      '/episode/<SLUG>': 'Get streaming links (all proxied)',
-      '/anime/<SLUG>': 'Get anime detail',
-      '/ongoing-anime/<PAGE>': 'Get ongoing anime',
-      '/search/<KEYWORD>': 'Search anime',
+      proxy: {
+        '/proxy/video?url=<VIDEO_URL>': 'Proxy any video URL (CORS bypass)',
+      },
+      anime: {
+        '/home': 'Get home page data',
+        '/schedule': 'Get anime schedule per day',
+        '/anime/:slug': 'Get anime detail (e.g. /anime/akamoto-day-part-2-sub-indo)',
+        '/complete-anime/:page': 'Get completed anime by page (e.g. /complete-anime/2)',
+        '/ongoing-anime?page=1': 'Get ongoing anime',
+        '/genre': 'Get all available genres',
+        '/genre/:slug?page=1': 'Get anime by genre (e.g. /genre/action?page=1)',
+        '/episode/:slug': 'Get episode streaming links with auto-proxy (e.g. /episode/mebsn-episode-1-sub-indo)',
+        '/search/:keyword': 'Search anime (e.g. /search/boruto)',
+        '/batch/:slug': 'Get batch download links (e.g. /batch/jshk-s2-batch-sub-indo)',
+        '/server/:serverId': 'Get embed streaming URL by server ID (e.g. /server/6D8AE8-5-8B5u)',
+        '/unlimited': 'Get all anime data',
+      },
     },
     example_usage: {
-      episode: `${req.protocol}://${req.get('host')}/episode/one-piece-episode-1146`,
-      proxy: `${req.protocol}://${req.get('host')}/proxy/video?url=https://googlevideo.com/...`,
-    }
+      episode_with_proxy: `${req.protocol}://${req.get('host')}/episode/one-piece-episode-1146`,
+      direct_proxy: `${req.protocol}://${req.get('host')}/proxy/video?url=https://googlevideo.com/...`,
+      home: `${req.protocol}://${req.get('host')}/home`,
+      search: `${req.protocol}://${req.get('host')}/search/naruto`,
+    },
+    notes: [
+      'All Blogger URLs will be automatically scraped for MP4/HLS',
+      'All Google Video URLs will be automatically proxied',
+      'Episode endpoint returns: stream_url, stream_list, and resolved_links array',
+    ],
   });
 });
 
@@ -466,10 +489,10 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`🚀 RAILWAY BACKEND - GOOGLE VIDEO PROXY`);
+  console.log(`🚀 RAILWAY BACKEND - SANKAVOLLEREI API`);
   console.log(`${'='.repeat(60)}`);
   console.log(`📡 Port: ${PORT}`);
-  console.log(`🔗 Proxying to: ${KITANIME_API}`);
+  console.log(`🔗 Proxying to: ${SANKAVOLLEREI_API}`);
   console.log(`🔥 Google Video proxy: ACTIVE`);
   console.log(`✅ All video URLs will be proxied automatically`);
   console.log(`${'='.repeat(60)}\n`);
