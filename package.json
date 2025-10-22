@@ -1,7 +1,7 @@
 {
-  "name": "railway-kitanime-backend",
-  "version": "2.0.0",
-  "description": "Kitanime API backend with Puppeteer scraper - MP4/HLS only",
+  "name": "railway-anime-backend",
+  "version": "4.0.0",
+  "description": "Railway backend with Google Video CORS proxy for anime streaming",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,19 +9,18 @@
   },
   "keywords": [
     "anime",
-    "kitanime",
-    "scraper",
-    "puppeteer",
-    "railway"
+    "proxy",
+    "cors-bypass",
+    "googlevideo",
+    "blogger",
+    "streaming"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
-    "axios": "^1.7.9",
-    "cheerio": "^1.0.0",
-    "cors": "^2.8.5",
     "express": "^4.21.2",
-    "puppeteer": "^23.11.1"
+    "cors": "^2.8.5",
+    "axios": "^1.7.9"
   },
   "engines": {
     "node": ">=20.x",
