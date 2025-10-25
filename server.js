@@ -70,109 +70,64 @@ function getQualityFromItag(itag) {
 }
 
 // ============================================
-// 🔥 AGGRESSIVE RESOLVER - HANDLE ALL TYPES
-// ============================================
-
-async function aggressiveResolve(url, depth = 0) {
-  if (depth > 2) {
-    console.log(`${'  '.repeat(depth)}⚠️ Max depth reached`);
-    return null;
-  }
-
-  // Normalize URL first
-  const normalizedUrl = normalizeUrl(url);
-  if (!normalizedUrl) {
-    console.log(`${'  '.repeat(depth)}❌ Invalid URL: ${url}`);
-    return null;
-  }
-
-  const provider = getProvider(normalizedUrl);
-  console.log(`\n${'  '.repeat(depth)}🔥 RESOLVING: ${provider}`);
-  console.log(`${'  '.repeat(depth)}   URL: ${normalizedUrl.substring(0, 80)}...`);
-
-  try {
-    // Direct video - return immediately
-    if (isDirectVideo(normalizedUrl)) {
-      console.log(`${'  '.repeat(depth)}✅ DIRECT VIDEO`);
-      return { url: normalizedUrl, quality: extractQuality(normalizedUrl), type: getType(normalizedUrl) };
-    }
-
-    // Blogger - Extract Google Video
-    if (normalizedUrl.includes('blogger.com') || normalizedUrl.includes('blogspot.com') || normalizedUrl.includes('/blog/')) {
-      return await resolveBlogger(normalizedUrl, depth);
-    }
-
-    // Desustream - Handle verification codes
-    if (normalizedUrl.includes('desustream')) {
-      return await resolveDesustream(normalizedUrl, depth);
-    }
-
-    // Generic redirect resolver
-    return await resolveGeneric(normalizedUrl, depth);
-
-  } catch (error) {
-    console.error(`${'  '.repeat(depth)}❌ Error: ${error.message}`);
-    return null;
-  }
-}
-
-// ============================================
-// 🔥 BLOGGER RESOLVER - ENHANCED
+// 🔥 BLOGGER RESOLVER - HANDLES JSON RESPONSE
 // ============================================
 
 async function resolveBlogger(bloggerUrl, depth) {
   console.log(`${'  '.repeat(depth)}🔄 BLOGGER: Fetching...`);
   
   try {
-    // If it's a Kitanime /blog/ endpoint, fetch through their API
-    if (bloggerUrl.includes('/blog/')) {
-      const response = await axios.get(bloggerUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': 'https://kitanime-api.vercel.app/',
-          'Accept': '*/*',
-        },
-        timeout: 20000,
-        maxRedirects: 10,
-        validateStatus: (status) => status < 500,
-      });
+    const response = await axios.get(bloggerUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://kitanime-api.vercel.app/',
+        'Accept': 'application/json, text/html, */*',
+      },
+      timeout: 20000,
+      maxRedirects: 10,
+      validateStatus: (status) => status < 500,
+    });
 
-      // Check if we got redirected to a blogger URL
-      const finalUrl = response.request.res.responseUrl || bloggerUrl;
+    const data = response.data;
+    
+    // Check if response is JSON
+    if (typeof data === 'object' && data.status === 'Ok' && data.data) {
+      console.log(`${'  '.repeat(depth)}   Got JSON response`);
+      const videoData = data.data;
       
-      if (finalUrl.includes('blogger.com') || finalUrl.includes('blogspot.com')) {
-        console.log(`${'  '.repeat(depth)}   Redirected to Blogger`);
-        return await resolveBlogger(finalUrl, depth + 1);
+      // Extract video URL from JSON
+      if (videoData.video_url) {
+        console.log(`${'  '.repeat(depth)}✅ BLOGGER: Found video_url`);
+        return {
+          url: videoData.video_url,
+          quality: extractQuality(videoData.video_url),
+          type: 'mp4'
+        };
       }
-
-      // Try to extract video from response
-      const videos = extractBloggerFromHtml(response.data, depth);
-      if (videos && videos.length > 0) {
-        console.log(`${'  '.repeat(depth)}✅ BLOGGER: ${videos.length} links`);
-        return videos[0];
+      
+      // Check for redirect URL
+      if (videoData.redirect_url) {
+        console.log(`${'  '.repeat(depth)}🔄 BLOGGER: Following redirect...`);
+        return await resolveBlogger(videoData.redirect_url, depth + 1);
       }
-    } else {
-      // Direct blogger URL
-      const response = await axios.get(bloggerUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': 'https://www.blogger.com/',
-          'Accept': '*/*',
-        },
-        timeout: 20000,
-      });
-
-      const videos = extractBloggerFromHtml(response.data, depth);
+    }
+    
+    // If response is HTML
+    if (typeof data === 'string') {
+      const videos = extractBloggerFromHtml(data, depth);
       if (videos && videos.length > 0) {
-        console.log(`${'  '.repeat(depth)}✅ BLOGGER: ${videos.length} links`);
+        console.log(`${'  '.repeat(depth)}✅ BLOGGER: ${videos.length} links from HTML`);
         return videos[0];
       }
     }
+
+    console.log(`${'  '.repeat(depth)}⚠️ BLOGGER: No video found`);
+    return null;
+
   } catch (error) {
     console.log(`${'  '.repeat(depth)}⚠️ BLOGGER: ${error.message.substring(0, 50)}`);
+    return null;
   }
-  
-  return null;
 }
 
 function extractBloggerFromHtml(html, depth) {
@@ -252,22 +207,21 @@ function extractBloggerFromHtml(html, depth) {
 // ============================================
 
 async function resolveDesustream(desustreamUrl, depth) {
-  console.log(`${'  '.repeat(depth)}🔄 DESUSTREAM: Attempting direct access...`);
+  console.log(`${'  '.repeat(depth)}🔄 DESUSTREAM: Attempting...`);
   
   try {
-    // Try to access the URL directly and look for iframe/video
     const response = await axios.get(desustreamUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': 'https://otakudesu.cloud/',
       },
-      timeout: 15000,
+      timeout: 10000,
       maxRedirects: 10,
       validateStatus: (status) => status < 500,
     });
 
     if (response.status === 404) {
-      console.log(`${'  '.repeat(depth)}⚠️ DESUSTREAM: 404 Not Found`);
+      console.log(`${'  '.repeat(depth)}⚠️ DESUSTREAM: 404`);
       return null;
     }
 
@@ -277,81 +231,66 @@ async function resolveDesustream(desustreamUrl, depth) {
     // Look for blogger iframe
     const iframeSrc = $('iframe[src*="blogger"], iframe[src*="blogspot"]').first().attr('src');
     if (iframeSrc) {
-      console.log(`${'  '.repeat(depth)}🔄 DESUSTREAM: Found Blogger iframe`);
-      return await aggressiveResolve(iframeSrc, depth + 1);
+      console.log(`${'  '.repeat(depth)}✅ DESUSTREAM: Found iframe`);
+      return await resolveBlogger(iframeSrc, depth + 1);
     }
 
-    // Try to extract video directly
-    const videos = extractBloggerFromHtml(html, depth);
-    if (videos && videos.length > 0) {
-      console.log(`${'  '.repeat(depth)}✅ DESUSTREAM: Direct extraction (${videos.length} links)`);
-      return videos[0];
-    }
-
-    console.log(`${'  '.repeat(depth)}⚠️ DESUSTREAM: No video found`);
     return null;
 
   } catch (error) {
-    console.log(`${'  '.repeat(depth)}⚠️ DESUSTREAM: ${error.message.substring(0, 50)}`);
+    console.log(`${'  '.repeat(depth)}⚠️ DESUSTREAM: ${error.message.substring(0, 30)}`);
     return null;
   }
 }
 
 // ============================================
-// 🔥 GENERIC RESOLVER - HANDLE REDIRECTS
+// 🔥 AGGRESSIVE RESOLVER - HANDLE ALL TYPES
 // ============================================
 
-async function resolveGeneric(url, depth) {
-  console.log(`${'  '.repeat(depth)}🔄 GENERIC: Fetching...`);
-  
+async function aggressiveResolve(url, depth = 0) {
+  if (depth > 2) {
+    console.log(`${'  '.repeat(depth)}⚠️ Max depth`);
+    return null;
+  }
+
+  const normalizedUrl = normalizeUrl(url);
+  if (!normalizedUrl) {
+    console.log(`${'  '.repeat(depth)}❌ Invalid URL`);
+    return null;
+  }
+
+  const provider = getProvider(normalizedUrl);
+  console.log(`\n${'  '.repeat(depth)}🔥 ${provider}: ${normalizedUrl.substring(0, 60)}...`);
+
   try {
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://otakudesu.cloud/',
-      },
-      timeout: 20000,
-      maxRedirects: 5,
-    });
-
-    const finalUrl = response.request.res.responseUrl || url;
-    
-    // Check if redirected to direct video
-    if (finalUrl !== url && isDirectVideo(finalUrl)) {
-      console.log(`${'  '.repeat(depth)}✅ REDIRECT: Direct video`);
-      return {
-        url: finalUrl,
-        quality: extractQuality(finalUrl),
-        type: getType(finalUrl)
+    // Direct video
+    if (isDirectVideo(normalizedUrl)) {
+      console.log(`${'  '.repeat(depth)}✅ DIRECT VIDEO`);
+      return { 
+        url: normalizedUrl, 
+        quality: extractQuality(normalizedUrl), 
+        type: getType(normalizedUrl) 
       };
     }
 
-    const html = response.data;
-    const $ = cheerio.load(html);
-
-    // Look for video tags
-    const videoSrc = $('video source[src], video[src]').first().attr('src');
-    if (videoSrc && isDirectVideo(videoSrc)) {
-      console.log(`${'  '.repeat(depth)}✅ VIDEO TAG: Found`);
-      return {
-        url: videoSrc,
-        quality: extractQuality(videoSrc),
-        type: getType(videoSrc)
-      };
+    // Blogger
+    if (normalizedUrl.includes('blogger.com') || 
+        normalizedUrl.includes('blogspot.com') || 
+        normalizedUrl.includes('/blog/')) {
+      return await resolveBlogger(normalizedUrl, depth);
     }
 
-    // Look for Blogger iframe
-    const bloggerIframe = $('iframe[src*="blogger"]').first().attr('src');
-    if (bloggerIframe) {
-      console.log(`${'  '.repeat(depth)}🔄 IFRAME: Blogger found`);
-      return await aggressiveResolve(bloggerIframe, depth + 1);
+    // Desustream
+    if (normalizedUrl.includes('desustream')) {
+      return await resolveDesustream(normalizedUrl, depth);
     }
+
+    return null;
 
   } catch (error) {
-    console.log(`${'  '.repeat(depth)}⚠️ GENERIC: ${error.message.substring(0, 50)}`);
+    console.error(`${'  '.repeat(depth)}❌ ${error.message.substring(0, 30)}`);
+    return null;
   }
-  
-  return null;
 }
 
 // ============================================
@@ -362,11 +301,10 @@ app.get('/episode/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🎬 EPISODE REQUEST: ${slug}`);
+    console.log(`🎬 EPISODE: ${slug}`);
     console.log(`${'='.repeat(60)}`);
     
     // Fetch from Kitanime API
-    console.log('📡 Step 1: Fetching from Kitanime API...');
     const apiResponse = await axios.get(`${KITANIME_API}/episode/${slug}`, {
       timeout: 30000,
       validateStatus: (status) => status < 500,
@@ -380,88 +318,44 @@ app.get('/episode/:slug', async (req, res) => {
     }
 
     const episodeData = apiResponse.data.data;
-    console.log('✅ Kitanime API response received');
+    console.log('✅ API response received');
 
     const resolvedLinks = [];
     const urlsToResolve = [];
 
-    // 🔥 Step 2: Collect URLs to resolve
-    console.log('\n🔥 Step 2: Collecting URLs...');
-    
-    // Main stream URL
+    // Collect URLs (prioritize stream URLs)
     if (episodeData.stream_url) {
-      const normalizedUrl = normalizeUrl(episodeData.stream_url);
-      if (normalizedUrl) {
-        urlsToResolve.push({ 
-          url: normalizedUrl, 
-          source: 'main-stream',
-          quality: 'auto'
-        });
-      }
+      const url = normalizeUrl(episodeData.stream_url);
+      if (url) urlsToResolve.push({ url, source: 'stream', quality: 'auto' });
     }
     
-    // Quality list
     if (episodeData.steramList) {
       Object.entries(episodeData.steramList).forEach(([quality, url]) => {
-        const normalizedUrl = normalizeUrl(url);
-        if (normalizedUrl) {
-          urlsToResolve.push({ 
-            url: normalizedUrl, 
-            source: 'quality-list', 
-            quality 
-          });
-        }
+        const normalized = normalizeUrl(url);
+        if (normalized) urlsToResolve.push({ url: normalized, source: 'quality', quality });
       });
     }
 
-    // Download URLs - MP4
+    // Add download URLs (lower priority)
     if (episodeData.download_urls?.mp4) {
-      for (const resGroup of episodeData.download_urls.mp4) {
+      for (const resGroup of episodeData.download_urls.mp4.slice(0, 3)) {
         const resolution = resGroup.resolution || 'auto';
-        if (resGroup.urls && Array.isArray(resGroup.urls)) {
-          for (const urlData of resGroup.urls) {
-            const normalizedUrl = normalizeUrl(urlData.url);
-            if (normalizedUrl) {
-              urlsToResolve.push({
-                url: normalizedUrl,
-                source: 'download-mp4',
-                quality: resolution,
-                provider: urlData.provider
-              });
-            }
-          }
+        if (resGroup.urls?.[0]?.url) {
+          const url = normalizeUrl(resGroup.urls[0].url);
+          if (url) urlsToResolve.push({
+            url,
+            source: 'download-mp4',
+            quality: resolution,
+            provider: resGroup.urls[0].provider
+          });
         }
       }
     }
 
-    // Download URLs - MKV
-    if (episodeData.download_urls?.mkv) {
-      for (const resGroup of episodeData.download_urls.mkv) {
-        const resolution = resGroup.resolution || 'auto';
-        if (resGroup.urls && Array.isArray(resGroup.urls)) {
-          for (const urlData of resGroup.urls) {
-            const normalizedUrl = normalizeUrl(urlData.url);
-            if (normalizedUrl) {
-              urlsToResolve.push({
-                url: normalizedUrl,
-                source: 'download-mkv',
-                quality: resolution,
-                provider: urlData.provider
-              });
-            }
-          }
-        }
-      }
-    }
+    console.log(`\n🔥 Resolving ${Math.min(urlsToResolve.length, 5)} URLs...`);
 
-    console.log(`   Found ${urlsToResolve.length} URLs to resolve`);
-
-    // 🔥 Step 3: Resolve URLs (limit to prevent timeout)
-    console.log('\n🔥 Step 3: Resolving URLs (max 10)...');
-    
-    const urlsToAttempt = urlsToResolve.slice(0, 10);
-    
-    for (const item of urlsToAttempt) {
+    // Resolve URLs (limit to 5 to prevent timeout)
+    for (const item of urlsToResolve.slice(0, 5)) {
       try {
         const resolved = await aggressiveResolve(item.url);
         
@@ -475,7 +369,7 @@ app.get('/episode/:slug', async (req, res) => {
           });
         }
       } catch (e) {
-        console.log(`⚠️ Failed to resolve: ${item.url.substring(0, 50)}...`);
+        console.log(`⚠️ Failed: ${item.url.substring(0, 40)}...`);
       }
     }
 
@@ -490,19 +384,29 @@ app.get('/episode/:slug', async (req, res) => {
       }
     }
 
-    console.log(`\n✅ FINAL RESULTS: ${uniqueLinks.length} unique links`);
+    console.log(`\n✅ RESULT: ${uniqueLinks.length} links`);
     
     if (uniqueLinks.length > 0) {
-      console.log(`\n🎉 TOP LINKS:`);
-      uniqueLinks.slice(0, 5).forEach((link, i) => {
-        console.log(`   ${i + 1}. ${link.provider} - ${link.quality} (${link.type})`);
+      uniqueLinks.slice(0, 3).forEach((link, i) => {
+        console.log(`   ${i + 1}. ${link.provider} - ${link.quality}`);
       });
     }
 
-    // Build response
-    const streamUrl = uniqueLinks.find(l => l.type !== 'mega')?.url || episodeData.stream_url;
+    // Build response - ALWAYS include normalized URLs
+    const normalizedStreamUrl = normalizeUrl(episodeData.stream_url);
+    const streamUrl = uniqueLinks.find(l => l.type !== 'mega')?.url || normalizedStreamUrl;
     
     const streamList = {};
+    if (episodeData.steramList) {
+      Object.entries(episodeData.steramList).forEach(([quality, url]) => {
+        const normalized = normalizeUrl(url);
+        if (normalized) {
+          streamList[quality] = normalized;
+        }
+      });
+    }
+
+    // Add resolved links to streamList
     uniqueLinks.forEach(link => {
       if (link.quality && link.quality !== 'auto' && link.type !== 'mega') {
         streamList[link.quality] = link.url;
@@ -514,13 +418,13 @@ app.get('/episode/:slug', async (req, res) => {
       data: {
         ...episodeData,
         stream_url: streamUrl,
-        stream_list: Object.keys(streamList).length > 0 ? streamList : episodeData.steramList,
+        stream_list: streamList,
         resolved_links: uniqueLinks,
       }
     });
 
   } catch (error) {
-    console.error('\n❌ EPISODE ERROR:', error.message);
+    console.error('\n❌ ERROR:', error.message);
     res.status(500).json({
       status: 'Error',
       message: error.message
@@ -551,8 +455,6 @@ proxyEndpoints.forEach(endpoint => {
       const queryString = req.url.split('?')[1] || '';
       const fullPath = queryString ? `${path}?${queryString}` : path;
       
-      console.log(`\n📡 Proxy: ${fullPath}`);
-      
       const response = await axios.get(`${KITANIME_API}${fullPath}`, {
         timeout: 30000,
         validateStatus: (status) => status < 500,
@@ -560,7 +462,7 @@ proxyEndpoints.forEach(endpoint => {
       
       res.json(response.data);
     } catch (error) {
-      console.error(`❌ Proxy error for ${req.path}:`, error.message);
+      console.error(`❌ Proxy error: ${error.message}`);
       res.status(500).json({
         status: 'Error',
         message: error.message
@@ -576,30 +478,20 @@ proxyEndpoints.forEach(endpoint => {
 app.get('/', (req, res) => {
   res.json({
     status: 'Online',
-    service: '🔥 Railway Anime Backend - Kitanime API with Aggressive Scraping',
-    version: '3.0.0',
-    base_api: 'https://kitanime-api.vercel.app/v1',
+    service: '🔥 Railway Anime Backend',
+    version: '3.1.0',
     features: [
-      '✅ Aggressive link resolution',
-      '✅ URL normalization (relative to absolute)',
-      '✅ Blogger video extraction',
-      '✅ Desustream support',
-      '✅ Redirect following',
+      '✅ URL normalization',
+      '✅ Blogger JSON/HTML support',
+      '✅ Desustream iframe extraction',
       '✅ Multiple quality variants',
-      '✅ MP4 + HLS support',
     ],
     endpoints: {
-      '/episode/:slug': 'Get episode with aggressive scraping',
-      '/home': 'Get home page data',
-      '/search/:keyword': 'Search anime',
+      '/episode/:slug': 'Get episode with scraping',
       '/anime/:slug': 'Get anime detail',
       '/ongoing-anime/:page': 'Get ongoing anime',
       '/complete-anime/:page': 'Get completed anime',
-      '/genres': 'Get all genres',
-      '/genres/:slug/:page': 'Get anime by genre',
-      '/movies/:page': 'Get movies',
     },
-    example: `${req.protocol}://${req.get('host')}/episode/one-piece-episode-1146`,
   });
 });
 
@@ -609,11 +501,8 @@ app.get('/', (req, res) => {
 
 function getProvider(url) {
   if (url.includes('desustream')) return 'Desustream';
-  if (url.includes('blogger.com') || url.includes('/blog/')) return 'Blogger';
+  if (url.includes('blogger') || url.includes('/blog/')) return 'Blogger';
   if (url.includes('googlevideo')) return 'GoogleVideo';
-  if (url.includes('otakufiles')) return 'OtakuFiles';
-  if (url.includes('streamtape')) return 'Streamtape';
-  if (url.includes('mp4upload')) return 'MP4Upload';
   return 'Direct';
 }
 
@@ -625,11 +514,8 @@ function getType(url) {
 
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`🚀 RAILWAY BACKEND - KITANIME API`);
-  console.log(`${'='.repeat(60)}`);
+  console.log(`🚀 RAILWAY BACKEND`);
   console.log(`📡 Port: ${PORT}`);
-  console.log(`🔗 Proxying to: ${KITANIME_API}`);
-  console.log(`🔥 Aggressive scraping: ACTIVE`);
-  console.log(`✅ Desustream, Blogger: SUPPORTED`);
+  console.log(`🔗 API: ${KITANIME_API}`);
   console.log(`${'='.repeat(60)}\n`);
 });
