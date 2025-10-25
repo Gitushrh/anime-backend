@@ -1,7 +1,8 @@
-// server.js - RAILWAY BACKEND - DIRECT PASSTHROUGH
+// server.js - RAILWAY BACKEND WITH BLOG RESOLVER
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const cheerio = require('cheerio');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -13,27 +14,141 @@ const KITANIME_API = 'https://kitanime-api.vercel.app/v1';
 const KITANIME_BASE = 'https://kitanime-api.vercel.app';
 
 // ============================================
-// 🔥 URL NORMALIZATION
+// 🔥 BLOG URL RESOLVER
 // ============================================
 
-function normalizeUrl(url) {
-  if (!url) return null;
+async function resolveBlogUrl(blogUrl) {
+  console.log(`🔄 Resolving: ${blogUrl.substring(0, 70)}...`);
   
-  // Already absolute URL
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    return url;
+  try {
+    // Try to fetch the blog URL and follow redirects
+    const response = await axios.get(blogUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://kitanime-api.vercel.app/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      timeout: 15000,
+      maxRedirects: 10,
+      validateStatus: (status) => status < 500,
+    });
+
+    const finalUrl = response.request?.res?.responseUrl || blogUrl;
+    
+    // Check if we got redirected to a direct video
+    if (finalUrl !== blogUrl && 
+        (finalUrl.includes('googlevideo.com') || 
+         finalUrl.includes('blogger.com') ||
+         finalUrl.includes('blogspot.com'))) {
+      console.log(`✅ Redirected to: ${finalUrl.substring(0, 70)}...`);
+      
+      // If it's a blogger URL, try to extract video
+      if (finalUrl.includes('blogger.com') || finalUrl.includes('blogspot.com')) {
+        const videoUrl = await extractFromBlogger(finalUrl);
+        if (videoUrl) return videoUrl;
+      }
+      
+      return finalUrl;
+    }
+
+    // Try to extract video from response HTML
+    const html = response.data;
+    if (typeof html === 'string') {
+      const $ = cheerio.load(html);
+      
+      // Look for blogger iframe
+      const bloggerIframe = $('iframe[src*="blogger"], iframe[src*="blogspot"]').first().attr('src');
+      if (bloggerIframe) {
+        console.log(`🔄 Found blogger iframe`);
+        const videoUrl = await extractFromBlogger(bloggerIframe);
+        if (videoUrl) return videoUrl;
+      }
+      
+      // Look for direct video URLs in HTML
+      const googleVideoPattern = /https?:\/\/[^"'\s]*googlevideo\.com[^"'\s]*/g;
+      const matches = html.match(googleVideoPattern);
+      
+      if (matches && matches.length > 0) {
+        const cleanUrl = matches[0].replace(/\\u0026/g, '&').replace(/\\/g, '');
+        console.log(`✅ Found googlevideo URL`);
+        return cleanUrl;
+      }
+    }
+
+  } catch (error) {
+    console.log(`⚠️ Resolve error: ${error.message.substring(0, 50)}`);
   }
   
-  // Relative URL - prepend base
-  if (url.startsWith('/')) {
-    return `${KITANIME_BASE}${url}`;
+  return null;
+}
+
+async function extractFromBlogger(bloggerUrl) {
+  try {
+    console.log(`🔄 Extracting from blogger...`);
+    
+    const response = await axios.get(bloggerUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.blogger.com/',
+        'Accept': '*/*',
+      },
+      timeout: 15000,
+    });
+
+    const html = response.data;
+    
+    // Method 1: streams array
+    const streamsMatch = html.match(/"streams":\s*\[([^\]]+)\]/);
+    if (streamsMatch) {
+      const playPattern = /"play_url":"([^"]+)"/;
+      const match = streamsMatch[0].match(playPattern);
+      
+      if (match) {
+        const videoUrl = match[1]
+          .replace(/\\u0026/g, '&')
+          .replace(/\\\//g, '/')
+          .replace(/\\/g, '');
+        
+        if (videoUrl.includes('googlevideo.com')) {
+          console.log(`✅ Extracted from streams`);
+          return videoUrl;
+        }
+      }
+    }
+
+    // Method 2: progressive_url
+    const progressiveMatch = html.match(/"progressive_url":"([^"]+)"/);
+    if (progressiveMatch) {
+      const videoUrl = progressiveMatch[1]
+        .replace(/\\u0026/g, '&')
+        .replace(/\\\//g, '/')
+        .replace(/\\/g, '');
+      
+      if (videoUrl.includes('googlevideo')) {
+        console.log(`✅ Extracted from progressive_url`);
+        return videoUrl;
+      }
+    }
+
+    // Method 3: Direct googlevideo search
+    const googleVideoPattern = /https?:\/\/[^"'\s]*googlevideo\.com[^"'\s]*/g;
+    const matches = html.match(googleVideoPattern);
+    
+    if (matches && matches.length > 0) {
+      const cleanUrl = matches[0].replace(/\\u0026/g, '&').replace(/\\/g, '');
+      console.log(`✅ Extracted googlevideo URL`);
+      return cleanUrl;
+    }
+
+  } catch (error) {
+    console.log(`⚠️ Blogger extract error: ${error.message.substring(0, 50)}`);
   }
   
   return null;
 }
 
 // ============================================
-// 🔥 MAIN EPISODE ENDPOINT - SIMPLE PASSTHROUGH
+// 🔥 MAIN EPISODE ENDPOINT
 // ============================================
 
 app.get('/episode/:slug', async (req, res) => {
@@ -59,63 +174,88 @@ app.get('/episode/:slug', async (req, res) => {
     const episodeData = apiResponse.data.data;
     console.log('✅ API response received');
 
-    // Normalize all URLs in the response
-    const normalizedData = {
-      ...episodeData,
-      stream_url: normalizeUrl(episodeData.stream_url) || episodeData.stream_url,
-    };
+    // Resolve main stream URL
+    let resolvedStreamUrl = null;
+    if (episodeData.stream_url) {
+      const normalizedUrl = episodeData.stream_url.startsWith('http') 
+        ? episodeData.stream_url 
+        : `${KITANIME_BASE}${episodeData.stream_url}`;
+      
+      resolvedStreamUrl = await resolveBlogUrl(normalizedUrl);
+    }
 
-    // Normalize steramList
+    // Resolve quality URLs
+    const resolvedStreamList = {};
     if (episodeData.steramList) {
-      const normalizedStreamList = {};
-      Object.entries(episodeData.steramList).forEach(([quality, url]) => {
-        normalizedStreamList[quality] = normalizeUrl(url) || url;
+      for (const [quality, url] of Object.entries(episodeData.steramList)) {
+        const normalizedUrl = url.startsWith('http') 
+          ? url 
+          : `${KITANIME_BASE}${url}`;
+        
+        const resolved = await resolveBlogUrl(normalizedUrl);
+        if (resolved) {
+          resolvedStreamList[quality] = resolved;
+        }
+      }
+    }
+
+    // Use resolved URLs or fallback to normalized originals
+    const finalStreamUrl = resolvedStreamUrl || 
+      (episodeData.stream_url?.startsWith('http') 
+        ? episodeData.stream_url 
+        : `${KITANIME_BASE}${episodeData.stream_url}`);
+
+    const finalStreamList = Object.keys(resolvedStreamList).length > 0 
+      ? resolvedStreamList 
+      : (episodeData.steramList 
+          ? Object.fromEntries(
+              Object.entries(episodeData.steramList).map(([quality, url]) => [
+                quality,
+                url.startsWith('http') ? url : `${KITANIME_BASE}${url}`
+              ])
+            )
+          : {});
+
+    console.log(`\n✅ RESOLVED:`);
+    console.log(`   Stream: ${finalStreamUrl?.substring(0, 70)}...`);
+    if (Object.keys(finalStreamList).length > 0) {
+      Object.entries(finalStreamList).forEach(([quality, url]) => {
+        console.log(`   ${quality}: ${url.substring(0, 70)}...`);
       });
-      normalizedData.stream_list = normalizedStreamList;
-      normalizedData.steramList = normalizedStreamList;
     }
 
     // Normalize download URLs
-    if (episodeData.download_urls) {
-      const normalizedDownloads = { ...episodeData.download_urls };
-      
-      // MP4
-      if (normalizedDownloads.mp4) {
-        normalizedDownloads.mp4 = normalizedDownloads.mp4.map(resGroup => ({
-          ...resGroup,
-          urls: resGroup.urls?.map(urlData => ({
-            ...urlData,
-            url: normalizeUrl(urlData.url) || urlData.url
-          }))
-        }));
-      }
-      
-      // MKV
-      if (normalizedDownloads.mkv) {
-        normalizedDownloads.mkv = normalizedDownloads.mkv.map(resGroup => ({
-          ...resGroup,
-          urls: resGroup.urls?.map(urlData => ({
-            ...urlData,
-            url: normalizeUrl(urlData.url) || urlData.url
-          }))
-        }));
-      }
-      
-      normalizedData.download_urls = normalizedDownloads;
-    }
-
-    console.log(`✅ Normalized URLs`);
-    console.log(`   Stream: ${normalizedData.stream_url.substring(0, 60)}...`);
+    const normalizedDownloads = episodeData.download_urls ? { ...episodeData.download_urls } : {};
     
-    if (normalizedData.stream_list) {
-      Object.keys(normalizedData.stream_list).forEach(quality => {
-        console.log(`   ${quality}: ${normalizedData.stream_list[quality].substring(0, 60)}...`);
-      });
+    if (normalizedDownloads.mp4) {
+      normalizedDownloads.mp4 = normalizedDownloads.mp4.map(resGroup => ({
+        ...resGroup,
+        urls: resGroup.urls?.map(urlData => ({
+          ...urlData,
+          url: urlData.url?.startsWith('http') ? urlData.url : `${KITANIME_BASE}${urlData.url}`
+        }))
+      }));
+    }
+    
+    if (normalizedDownloads.mkv) {
+      normalizedDownloads.mkv = normalizedDownloads.mkv.map(resGroup => ({
+        ...resGroup,
+        urls: resGroup.urls?.map(urlData => ({
+          ...urlData,
+          url: urlData.url?.startsWith('http') ? urlData.url : `${KITANIME_BASE}${urlData.url}`
+        }))
+      }));
     }
 
     res.json({
       status: 'Ok',
-      data: normalizedData
+      data: {
+        ...episodeData,
+        stream_url: finalStreamUrl,
+        stream_list: finalStreamList,
+        steramList: finalStreamList,
+        download_urls: normalizedDownloads,
+      }
     });
 
   } catch (error) {
@@ -174,20 +314,19 @@ app.get('/', (req, res) => {
   res.json({
     status: 'Online',
     service: '🔥 Railway Anime Backend',
-    version: '4.0.0',
-    note: 'Simple passthrough with URL normalization',
+    version: '5.0.0',
     features: [
-      '✅ URL normalization (relative → absolute)',
-      '✅ Clean passthrough to Kitanime API',
-      '✅ No complex scraping (handled by Kitanime)',
+      '✅ Blog URL resolver',
+      '✅ Blogger video extraction',
+      '✅ Redirect following',
+      '✅ GoogleVideo URL extraction',
+      '✅ Multiple quality resolution',
     ],
     endpoints: {
-      '/episode/:slug': 'Get episode with normalized URLs',
+      '/episode/:slug': 'Get episode with resolved video URLs',
       '/anime/:slug': 'Get anime detail',
       '/ongoing-anime/:page': 'Get ongoing anime',
-      '/complete-anime/:page': 'Get completed anime',
     },
-    info: 'All /blog/ URLs are normalized to absolute URLs for direct playback'
   });
 });
 
@@ -197,9 +336,9 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`🚀 RAILWAY BACKEND - SIMPLE PASSTHROUGH`);
+  console.log(`🚀 RAILWAY BACKEND - BLOG RESOLVER`);
   console.log(`📡 Port: ${PORT}`);
   console.log(`🔗 API: ${KITANIME_API}`);
-  console.log(`✅ URL normalization: ACTIVE`);
+  console.log(`✅ Blog URL resolution: ACTIVE`);
   console.log(`${'='.repeat(60)}\n`);
 });
