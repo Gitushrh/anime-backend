@@ -724,7 +724,7 @@ app.get('/episode/:slug', async (req, res) => {
     const response = await axiosInstance.get(`${OTAKUDESU_API}/episode/${slug}`);
     const episodeData = response.data;
 
-    if (!episodeData || episodeData.status !== 'Ok') {
+    if (!episodeData || episodeData.status !== 'success') {
       return res.status(404).json({ status: 'Error', message: 'Episode not found' });
     }
 
