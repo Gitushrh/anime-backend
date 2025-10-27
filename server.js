@@ -282,21 +282,28 @@ app.get('/episode/:slug', async (req, res) => {
         }
       }
       
-      // 3. Process others only if Pixeldrain < 3 links
+          // 3. Process others only if Pixeldrain < 3 links
       if (streamableLinks.length < 3) {
         const promises = otherUrls.slice(0, 5).map(async (item) => {
           try {
+            let finalUrl = null;
+            
             if (item.url.includes('safelink') || item.url.includes('desustream.com/safelink')) {
-              const finalUrl = await resolveSafelink(item.url);
-              if (finalUrl && !isFileHosting(finalUrl) && isDirectVideo(finalUrl)) {
-                return {
-                  provider: `${item.provider} (${item.resolution}${item.format === 'mkv' ? ' MKV' : ''})`,
-                  url: finalUrl,
-                  type: item.format,
-                  quality: item.resolution,
-                  source: 'other',
-                };
-              }
+              finalUrl = await resolveSafelink(item.url);
+            } else if (item.url.includes('blogger.com') || item.url.includes('blogspot.com')) {
+              finalUrl = await resolveBlogger(item.url);
+            } else {
+              finalUrl = item.url;
+            }
+            
+            if (finalUrl && !isFileHosting(finalUrl) && isDirectVideo(finalUrl)) {
+              return {
+                provider: `${item.provider} (${item.resolution}${item.format === 'mkv' ? ' MKV' : ''})`,
+                url: finalUrl,
+                type: item.format,
+                quality: item.resolution,
+                source: 'other',
+              };
             }
           } catch (error) {
             // Silent fail
