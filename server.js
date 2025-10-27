@@ -724,6 +724,7 @@ app.get('/episode/:slug', async (req, res) => {
     const response = await axiosInstance.get(`${OTAKUDESU_API}/episode/${slug}`);
     const episodeData = response.data;
 
+    // ✅ FIX: Check for "success" not "Ok"
     if (!episodeData || episodeData.status !== 'success') {
       return res.status(404).json({ status: 'Error', message: 'Episode not found' });
     }
@@ -811,6 +812,7 @@ app.get('/episode/:slug', async (req, res) => {
       l.type !== 'mega-embed' && l.type !== 'mega'
     )?.url || data.stream_url;
 
+    // ✅ FIX: Return with "Ok" for compatibility
     res.json({
       status: 'Ok',
       data: {
