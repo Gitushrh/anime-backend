@@ -1,7 +1,7 @@
 {
-  "name": "railway-kitanime-aggressive-backend",
-  "version": "2.0.0",
-  "description": "Kitanime API backend with aggressive scraping - handles Mega, Desustream, Blogger, OtakuFiles",
+  "name": "otakudesu-universal-aggressive-scraper",
+  "version": "3.0.0",
+  "description": "Otakudesu API with Universal Aggressive Scraper - Stream Only (Blogger, Mega, Desustream, OtakuFiles, MP4Upload, Streamtape, Google Drive, Safelink Bypass)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,13 +9,18 @@
   },
   "keywords": [
     "anime",
-    "kitanime",
+    "otakudesu",
     "scraper",
     "aggressive",
     "railway",
+    "blogger",
     "mega",
     "desustream",
-    "blogger"
+    "otakufiles",
+    "mp4upload",
+    "streamtape",
+    "safelink-bypass",
+    "stream-only"
   ],
   "author": "",
   "license": "ISC",
