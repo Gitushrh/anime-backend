@@ -1,4 +1,4 @@
-// server.js - ONLY DIRECT VIDEO URLs (No File Hosting)
+// server.js - CONVERT ALL DOWNLOAD LINKS TO STREAMABLE
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -107,10 +107,10 @@ async function resolvePixeldrain(url) {
     
     const fileId = match[1];
     
-    // Direct download API
+    // 🎯 Direct download API (can be streamed!)
     const directUrl = `https://pixeldrain.com/api/file/${fileId}`;
     
-    console.log(`✅ Pixeldrain direct: ${directUrl}`);
+    console.log(`✅ Pixeldrain → MP4 stream: ${directUrl}`);
     return directUrl;
     
   } catch (error) {
@@ -313,6 +313,10 @@ app.get('/genre/:slug', async (req, res) => {
   }
 });
 
+// ============================================
+// 🎯 MAIN EPISODE ENDPOINT - CONVERT DOWNLOADS TO STREAMS
+// ============================================
+
 app.get('/episode/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
@@ -330,9 +334,9 @@ app.get('/episode/:slug', async (req, res) => {
     const data = episodeData.data;
     const streamableLinks = [];
 
-    console.log('\n🔥 PROCESSING DOWNLOAD URLS (DIRECT VIDEO ONLY)...\n');
+    console.log('\n🔥 PROCESSING ALL DOWNLOAD URLS → STREAMING...\n');
 
-    // Process ALL download URLs
+    // 🎯 Process ALL download URLs (MP4 + MKV)
     if (data.download_urls) {
       
       // Combine MP4 and MKV
@@ -347,7 +351,7 @@ app.get('/episode/:slug', async (req, res) => {
         
         if (resGroup.urls && Array.isArray(resGroup.urls)) {
           for (const urlData of resGroup.urls) {
-            console.log(`📦 Processing: ${urlData.provider} ${resolution}`);
+            console.log(`📦 ${urlData.provider} ${resolution}${format === 'mkv' ? ' MKV' : ''}`);
             
             let finalUrl = null;
             
@@ -370,6 +374,12 @@ app.get('/episode/:slug', async (req, res) => {
               if (bloggerUrl) finalUrl = bloggerUrl;
             }
             
+            // 🎯 Try resolve Pixeldrain
+            if (finalUrl.includes('pixeldrain.com/u/')) {
+              const pixelUrl = await resolvePixeldrain(finalUrl);
+              if (pixelUrl) finalUrl = pixelUrl;
+            }
+            
             // Only add if it's direct video
             if (isDirectVideo(finalUrl)) {
               streamableLinks.push({
@@ -378,11 +388,12 @@ app.get('/episode/:slug', async (req, res) => {
                 type: format,
                 quality: resolution,
                 source: 'download-converted',
+                note: 'Streaming from download link',
               });
               
               console.log(`   ✅ STREAMABLE: ${finalUrl.substring(0, 70)}...\n`);
             } else {
-              console.log(`   ❌ Not streamable: ${finalUrl.substring(0, 70)}...\n`);
+              console.log(`   ⚠️ Not direct video: ${finalUrl.substring(0, 70)}...\n`);
             }
           }
         }
@@ -404,13 +415,14 @@ app.get('/episode/:slug', async (req, res) => {
     console.log(`${'='.repeat(70)}\n`);
 
     if (uniqueLinks.length === 0) {
-      console.log('⚠️ No streamable links found!');
+      console.log('⚠️ No streamable links found! All downloads failed to convert.');
     }
 
-    // Build stream_list
+    // Build stream_list (by quality)
     const streamList = {};
     uniqueLinks.forEach(link => {
       if (link.quality && link.quality !== 'auto') {
+        // Use first occurrence of each quality
         if (!streamList[link.quality]) {
           streamList[link.quality] = link.url;
         }
@@ -419,7 +431,7 @@ app.get('/episode/:slug', async (req, res) => {
 
     // Main stream URL (prefer highest quality)
     const qualities = ['1080p', '720p', '480p', '360p'];
-    let streamUrl = data.stream_url;
+    let streamUrl = data.stream_url || '';
     
     for (const q of qualities) {
       const link = uniqueLinks.find(l => l.quality === q);
@@ -427,6 +439,11 @@ app.get('/episode/:slug', async (req, res) => {
         streamUrl = link.url;
         break;
       }
+    }
+    
+    // Fallback to first available
+    if (!streamUrl && uniqueLinks.length > 0) {
+      streamUrl = uniqueLinks[0].url;
     }
 
     res.json({
@@ -477,17 +494,18 @@ app.get('/unlimited', async (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'Online',
-    service: '🔥 Otakudesu - DIRECT VIDEO ONLY',
-    version: '5.0.0',
+    service: '🔥 Otakudesu - Download to Streaming Converter',
+    version: '6.0.0',
     api: 'https://www.sankavollerei.com/anime',
     features: [
-      '✅ ONLY direct video URLs (NO file hosting)',
-      '✅ Pixeldrain direct API',
+      '✅ Convert ALL download links → streaming',
+      '✅ Pixeldrain direct API (no storage needed)',
       '✅ Blogger/Google Video resolver',
       '✅ Safelink bypass (recursive)',
       '✅ Multi-quality: 360p-1080p',
       '✅ MP4 + MKV formats',
-      '🎯 DIRECT STREAMING (NO STORAGE)',
+      '🎯 PSEUDO-STREAMING from download URLs',
+      '💾 NO STORAGE USAGE - Direct streaming only',
     ],
     blocked: [
       '❌ OtakuFiles (needs login)',
@@ -501,14 +519,16 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(70)}`);
-  console.log(`🚀 OTAKUDESU - DIRECT VIDEO ONLY`);
+  console.log(`🚀 OTAKUDESU - DOWNLOAD TO STREAMING CONVERTER`);
   console.log(`${'='.repeat(70)}`);
   console.log(`📡 Port: ${PORT}`);
   console.log(`✅ Features:`);
-  console.log(`   • Pixeldrain direct API`);
+  console.log(`   • Convert download links → direct streaming`);
+  console.log(`   • Pixeldrain API (no storage)`);
   console.log(`   • Blogger/Google Video`);
-  console.log(`   • Safelink bypass`);
-  console.log(`   • Multi-resolution`);
+  console.log(`   • Multi-resolution support`);
+  console.log(`   • MP4 + MKV formats`);
   console.log(`❌ Blocked: File hosting sites`);
+  console.log(`💾 NO FILES SAVED - Pure streaming`);
   console.log(`${'='.repeat(70)}\n`);
 });
