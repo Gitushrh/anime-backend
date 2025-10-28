@@ -1,4 +1,4 @@
-// server.js - SAMEHADAKU API + PIXELDRAIN & KRAKENFILES PRIORITY
+// server.js - SANKAVOLLEREI API + PIXELDRAIN & KRAKENFILES PRIORITY
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -328,12 +328,12 @@ async function resolveBlogger(url) {
 }
 
 // ============================================
-// 📡 SAMEHADAKU API ENDPOINTS
+// 📡 SANKAVOLLEREI API ENDPOINTS
 // ============================================
 
 app.get('/home', async (req, res) => {
   try {
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/home`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/home`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -343,7 +343,7 @@ app.get('/home', async (req, res) => {
 app.get('/recent', async (req, res) => {
   try {
     const page = req.query.page || '1';
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/recent?page=${page}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/recent?page=${page}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -359,7 +359,7 @@ app.get('/search', async (req, res) => {
       return res.status(400).json({ status: 'Error', message: 'Query parameter required' });
     }
     
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/search?q=${encodeURIComponent(query)}&page=${page}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/search?q=${encodeURIComponent(query)}&page=${page}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -370,7 +370,7 @@ app.get('/ongoing', async (req, res) => {
   try {
     const page = req.query.page || '1';
     const order = req.query.order || 'popular';
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/ongoing?page=${page}&order=${order}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/ongoing?page=${page}&order=${order}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -381,7 +381,7 @@ app.get('/completed', async (req, res) => {
   try {
     const page = req.query.page || '1';
     const order = req.query.order || 'latest';
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/completed?page=${page}&order=${order}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/completed?page=${page}&order=${order}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -391,7 +391,7 @@ app.get('/completed', async (req, res) => {
 app.get('/popular', async (req, res) => {
   try {
     const page = req.query.page || '1';
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/popular?page=${page}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/popular?page=${page}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -402,7 +402,7 @@ app.get('/movies', async (req, res) => {
   try {
     const page = req.query.page || '1';
     const order = req.query.order || 'update';
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/movies?page=${page}&order=${order}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/movies?page=${page}&order=${order}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -411,7 +411,7 @@ app.get('/movies', async (req, res) => {
 
 app.get('/list', async (req, res) => {
   try {
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/list`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/unlimited`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -420,7 +420,7 @@ app.get('/list', async (req, res) => {
 
 app.get('/schedule', async (req, res) => {
   try {
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/schedule`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/schedule`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -429,7 +429,7 @@ app.get('/schedule', async (req, res) => {
 
 app.get('/genres', async (req, res) => {
   try {
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/genres`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/genre`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -440,7 +440,7 @@ app.get('/genres/:genreId', async (req, res) => {
   try {
     const { genreId } = req.params;
     const page = req.query.page || '1';
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/genres/${genreId}?page=${page}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/genre/${genreId}?page=${page}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -450,7 +450,7 @@ app.get('/genres/:genreId', async (req, res) => {
 app.get('/batch', async (req, res) => {
   try {
     const page = req.query.page || '1';
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/batch?page=${page}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/batch?page=${page}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -460,7 +460,7 @@ app.get('/batch', async (req, res) => {
 app.get('/anime/:animeId', async (req, res) => {
   try {
     const { animeId } = req.params;
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/anime/${animeId}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/anime/${animeId}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -470,7 +470,7 @@ app.get('/anime/:animeId', async (req, res) => {
 app.get('/batch/:batchId', async (req, res) => {
   try {
     const { batchId } = req.params;
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/batch/${batchId}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/batch/${batchId}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -480,7 +480,7 @@ app.get('/batch/:batchId', async (req, res) => {
 app.get('/server/:serverId', async (req, res) => {
   try {
     const { serverId } = req.params;
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/server/${serverId}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/server/${serverId}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -498,7 +498,7 @@ app.get('/episode/:episodeId', async (req, res) => {
     console.log(`🎬 EPISODE: ${episodeId}`);
     console.log(`${'='.repeat(70)}`);
     
-    const response = await axiosInstance.get(`${SAMEHADAKU_API}/episode/${episodeId}`);
+    const response = await axiosInstance.get(`${SANKAVOLLEREI_API}/episode/${episodeId}`);
     const episodeData = response.data;
 
     if (!episodeData || episodeData.status !== 'success') {
@@ -782,15 +782,15 @@ app.get('/episode/:episodeId', async (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'Online',
-    service: '🔥 Samehadaku - Pixeldrain & Krakenfiles Priority',
+    service: '🔥 Sankavollerei - Pixeldrain & Krakenfiles Priority',
     version: '1.0.0',
     api: 'https://www.sankavollerei.com/anime',
     features: [
       '💧 PIXELDRAIN PRIORITY (Tier 1)',
       '🐙 KRAKENFILES SUPPORT (Tier 2)',
       '📦 Smart fallback system (Tier 3)',
-      '✅ Multi-quality: 360p-1080p',
-      '✅ MP4 + MKV formats',
+      '✅ All qualities: 360p - 4K',
+      '✅ All formats: MP4, MKV, x265',
       '✅ Safelink bypass',
       '✅ Blogger/Google Video',
       '🎯 Direct streaming only',
@@ -818,12 +818,14 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(70)}`);
-  console.log(`🚀 SAMEHADAKU STREAMING - v1.0.0`);
+  console.log(`🚀 SANKAVOLLEREI STREAMING - v1.0.0`);
   console.log(`${'='.repeat(70)}`);
   console.log(`📡 Port: ${PORT}`);
+  console.log(`🌐 API: https://www.sankavollerei.com/anime`);
   console.log(`💧 PIXELDRAIN PRIORITY (Tier 1)`);
   console.log(`🐙 KRAKENFILES SUPPORT (Tier 2)`);
   console.log(`📦 Smart fallback system (Tier 3)`);
+  console.log(`🎬 All qualities: 360p - 4K`);
   console.log(`💾 NO STORAGE - Direct streaming`);
   console.log(`${'='.repeat(70)}\n`);
 });
