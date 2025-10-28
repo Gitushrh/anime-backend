@@ -344,9 +344,52 @@ app.get('/batch', async (req, res) => {
 app.get('/anime/:animeId', async (req, res) => {
   try {
     const { animeId } = req.params;
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`📺 ANIME DETAIL REQUEST: ${animeId}`);
+    console.log(`${'='.repeat(70)}`);
+    
     const response = await axiosInstance.get(`${SAMEHADAKU_API}/samehadaku/anime/${animeId}`);
-    res.json(response.data);
+    const apiData = response.data;
+    
+    console.log('\n✅ API Response received');
+    console.log(`   Status: ${apiData.status}`);
+    console.log(`   Has data: ${apiData.data ? 'YES' : 'NO'}`);
+    
+    if (apiData.data) {
+      const data = apiData.data;
+      console.log('\n📊 DATA FIELDS:');
+      console.log(`   title: "${data.title}" (length: ${data.title?.length || 0})`);
+      console.log(`   japanese: "${data.japanese}"`);
+      console.log(`   english: "${data.english}"`);
+      console.log(`   synonyms: "${data.synonyms}"`);
+      console.log(`   poster: ${data.poster ? 'EXISTS' : 'NULL'}`);
+      console.log(`   episodeList: ${data.episodeList ? `${data.episodeList.length} episodes` : 'NULL'}`);
+      console.log(`   score: ${JSON.stringify(data.score)}`);
+      console.log(`   status: ${data.status}`);
+      console.log(`   type: ${data.type}`);
+      
+      // Check if title is empty
+      if (!data.title || data.title.trim() === '') {
+        console.log('\n⚠️ WARNING: Title is empty! Using fallback...');
+        
+        // Apply fallback
+        const fallbackTitle = data.english || 
+                             data.japanese || 
+                             data.synonyms || 
+                             'Unknown Title';
+        
+        console.log(`   Fallback title: "${fallbackTitle}"`);
+        
+        // Modify response to include fallback title
+        apiData.data.title = fallbackTitle;
+      }
+    }
+    
+    console.log(`${'='.repeat(70)}\n`);
+    
+    res.json(apiData);
   } catch (error) {
+    console.error('\n❌ ERROR in /anime/:animeId:', error.message);
     res.status(500).json({ status: 'Error', message: error.message });
   }
 });
