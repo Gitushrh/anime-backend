@@ -1,4 +1,4 @@
-// server.js - SAMEHADAKU: PIXELDRAIN + KRAKENFILES + SERVER RESOLVER
+// server.js - SAMEHADAKU: AUTO-RESOLVE BLOGGER + PIXELDRAIN + KRAKENFILES
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -84,6 +84,44 @@ function isFileHosting(url) {
 }
 
 // ============================================
+// 🔥 BLOGGER RESOLVER (EXTRACT GOOGLE VIDEO)
+// ============================================
+
+async function resolveBlogger(url) {
+  console.log('      🎬 Resolving Blogger...');
+  
+  try {
+    const response = await axiosInstance.get(url, {
+      headers: {
+        'Referer': 'https://www.blogger.com/',
+        'Origin': 'https://www.blogger.com',
+      },
+    });
+
+    const html = response.data;
+    
+    // Extract Google Video URL
+    const videoPattern = /https?:\/\/[^"'\s]*googlevideo\.com[^"'\s]*/g;
+    const matches = html.match(videoPattern);
+    
+    if (matches && matches.length > 0) {
+      const videoUrl = matches[0]
+        .replace(/\\u0026/g, '&')
+        .replace(/\\\//g, '/')
+        .replace(/\\/g, '');
+      
+      console.log(`      ✅ Blogger → Google Video`);
+      return videoUrl;
+    }
+
+  } catch (error) {
+    console.log(`      ❌ Blogger error: ${error.message}`);
+  }
+  
+  return null;
+}
+
+// ============================================
 // 🔥 PIXELDRAIN RESOLVER
 // ============================================
 
@@ -128,8 +166,6 @@ async function resolveKrakenfiles(url) {
   console.log('      🐙 Resolving Krakenfiles...');
   
   try {
-    // Extract file ID
-    // https://krakenfiles.com/view/XYZ123/file.html
     const viewMatch = url.match(/krakenfiles\.com\/view\/([a-zA-Z0-9_-]+)/);
     
     if (!viewMatch) {
@@ -139,7 +175,6 @@ async function resolveKrakenfiles(url) {
     
     const fileId = viewMatch[1];
     
-    // Try scraping the page
     const response = await axiosInstance.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -152,13 +187,11 @@ async function resolveKrakenfiles(url) {
     
     let directUrl = null;
     
-    // Method 1: Download button
     const downloadBtn = $('a.download-button, a[href*="/download/"], a.btn-download, a[href*="/getfile/"]');
     if (downloadBtn.length > 0) {
       directUrl = downloadBtn.attr('href');
     }
     
-    // Method 2: Look in scripts for download URL
     if (!directUrl) {
       $('script').each((i, script) => {
         const content = $(script).html();
@@ -171,16 +204,13 @@ async function resolveKrakenfiles(url) {
       });
     }
     
-    // Method 3: Construct getfile URL (most reliable)
     if (!directUrl) {
       directUrl = `https://krakenfiles.com/getfile/${fileId}`;
     }
     
     if (directUrl) {
-      // Clean up URL
       directUrl = directUrl.replace(/\\u0026/g, '&').replace(/\\\//g, '/');
       
-      // Make sure it's absolute
       if (directUrl.startsWith('/')) {
         directUrl = `https://krakenfiles.com${directUrl}`;
       }
@@ -232,6 +262,10 @@ async function resolveSafelink(url, depth = 0) {
       return await resolveKrakenfiles(finalUrl);
     }
     
+    if (finalUrl.includes('blogger.com') || finalUrl.includes('blogspot.com')) {
+      return await resolveBlogger(finalUrl);
+    }
+    
     if (isDirectVideo(finalUrl)) {
       console.log(`      ✅ Direct video found`);
       return finalUrl;
@@ -268,6 +302,10 @@ async function resolveSafelink(url, depth = 0) {
           return await resolveKrakenfiles(href);
         }
         
+        if (href.includes('blogger.com') || href.includes('blogspot.com')) {
+          return await resolveBlogger(href);
+        }
+        
         if (isDirectVideo(href)) {
           return href;
         }
@@ -278,43 +316,6 @@ async function resolveSafelink(url, depth = 0) {
     console.log(`      ❌ Error: ${error.message}`);
   }
 
-  return null;
-}
-
-// ============================================
-// 🔥 BLOGGER RESOLVER
-// ============================================
-
-async function resolveBlogger(url) {
-  console.log('      🎬 Resolving Blogger...');
-  
-  try {
-    const response = await axiosInstance.get(url, {
-      headers: {
-        'Referer': 'https://www.blogger.com/',
-        'Origin': 'https://www.blogger.com',
-      },
-    });
-
-    const html = response.data;
-    
-    const videoPattern = /https?:\/\/[^"'\s]*googlevideo\.com[^"'\s]*/g;
-    const matches = html.match(videoPattern);
-    
-    if (matches && matches.length > 0) {
-      const videoUrl = matches[0]
-        .replace(/\\u0026/g, '&')
-        .replace(/\\\//g, '/')
-        .replace(/\\/g, '');
-      
-      console.log(`      ✅ Blogger resolved`);
-      return videoUrl;
-    }
-
-  } catch (error) {
-    console.log(`      ❌ Blogger error: ${error.message}`);
-  }
-  
   return null;
 }
 
@@ -420,7 +421,7 @@ app.get('/server/:serverId', async (req, res) => {
 });
 
 // ============================================
-// 🎯 MAIN EPISODE ENDPOINT - PIXELDRAIN + KRAKENFILES + SERVER
+// 🎯 MAIN EPISODE ENDPOINT - AUTO RESOLVE BLOGGER
 // ============================================
 
 app.get('/episode/:slug', async (req, res) => {
@@ -440,7 +441,52 @@ app.get('/episode/:slug', async (req, res) => {
     const data = episodeData.data;
     const streamableLinks = [];
 
-    console.log('\n🔥 PROCESSING: PIXELDRAIN → KRAKENFILES → SERVER → FALLBACK\n');
+    console.log('\n🔥 PROCESSING: BLOGGER → PIXELDRAIN → KRAKENFILES → SERVER\n');
+
+    // ============================================
+    // 🎯 PRIORITY 0: RESOLVE defaultStreamingUrl (BLOGGER)
+    // ============================================
+    
+    if (data.defaultStreamingUrl) {
+      const defaultUrl = data.defaultStreamingUrl;
+      const urlLower = defaultUrl.toLowerCase();
+      
+      console.log(`\n📺 Default Streaming URL:`);
+      
+      // Check if it's Blogger URL that needs resolving
+      if (urlLower.includes('blogger.com') || urlLower.includes('blogspot.com')) {
+        console.log(`   🎬 Blogger URL detected - resolving...`);
+        
+        const resolvedUrl = await resolveBlogger(defaultUrl);
+        
+        if (resolvedUrl && isDirectVideo(resolvedUrl)) {
+          streamableLinks.push({
+            provider: 'Google Video Default',
+            url: resolvedUrl,
+            type: resolvedUrl.includes('.m3u8') ? 'hls' : 'mp4',
+            quality: 'auto',
+            source: 'blogger',
+            priority: 0,
+          });
+          
+          console.log(`      ✅ ADDED (HIGHEST PRIORITY)\n`);
+        } else {
+          console.log(`      ❌ Failed to resolve\n`);
+        }
+      } else if (urlLower.includes('googlevideo.com')) {
+        // Already a direct Google Video URL
+        streamableLinks.push({
+          provider: 'Google Video Direct',
+          url: defaultUrl,
+          type: defaultUrl.includes('.m3u8') ? 'hls' : 'mp4',
+          quality: 'auto',
+          source: 'direct',
+          priority: 0,
+        });
+        
+        console.log(`   ✅ Google Video URL (already direct)\n`);
+      }
+    }
 
     // ============================================
     // 🎯 PRIORITY 1: PROCESS DOWNLOAD URLs
@@ -449,7 +495,6 @@ app.get('/episode/:slug', async (req, res) => {
     if (data.downloadUrl && data.downloadUrl.formats) {
       const allDownloads = [];
       
-      // Collect all download links
       for (const format of data.downloadUrl.formats) {
         const formatType = format.title || 'Unknown';
         
@@ -476,7 +521,6 @@ app.get('/episode/:slug', async (req, res) => {
         }
       }
       
-      // Group by resolution
       const resolutionGroups = {};
       
       for (const dl of allDownloads) {
@@ -502,13 +546,12 @@ app.get('/episode/:slug', async (req, res) => {
         }
       }
       
-      // Process each resolution: PIXELDRAIN → KRAKENFILES → OTHERS
       for (const [resolution, group] of Object.entries(resolutionGroups)) {
         let foundForResolution = false;
         
         console.log(`\n🎯 ${resolution}:`);
         
-        // 1️⃣ TRY PIXELDRAIN FIRST
+        // Try Pixeldrain
         for (const dl of group.pixeldrain) {
           console.log(`   💧 Pixeldrain - ${dl.provider}`);
           
@@ -532,7 +575,7 @@ app.get('/episode/:slug', async (req, res) => {
           }
         }
         
-        // 2️⃣ TRY KRAKENFILES IF NO PIXELDRAIN
+        // Try Krakenfiles
         if (!foundForResolution) {
           for (const dl of group.krakenfiles) {
             console.log(`   🐙 Krakenfiles - ${dl.provider}`);
@@ -558,7 +601,7 @@ app.get('/episode/:slug', async (req, res) => {
           }
         }
         
-        // 3️⃣ FALLBACK TO OTHER PROVIDERS
+        // Fallback
         if (!foundForResolution) {
           console.log(`   ⚠️ Trying fallbacks...`);
           
@@ -609,7 +652,7 @@ app.get('/episode/:slug', async (req, res) => {
     }
 
     // ============================================
-    // 🎯 PRIORITY 2: PROCESS SERVER URLs (for streaming)
+    // 🎯 PRIORITY 2: PROCESS SERVER URLs
     // ============================================
     
     if (data.server && data.server.qualities) {
@@ -628,7 +671,6 @@ app.get('/episode/:slug', async (req, res) => {
             const streamUrl = await resolveServer(serverId);
             
             if (streamUrl && isDirectVideo(streamUrl)) {
-              // Check if not duplicate
               if (!streamableLinks.some(l => l.url === streamUrl)) {
                 streamableLinks.push({
                   provider: `${serverName} ${quality}`,
@@ -666,6 +708,7 @@ app.get('/episode/:slug', async (req, res) => {
     }
 
     console.log(`\n📊 RESULTS:`);
+    console.log(`   🎬 Blogger: ${uniqueLinks.filter(l => l.source === 'blogger' || l.source === 'direct').length}`);
     console.log(`   💧 Pixeldrain: ${uniqueLinks.filter(l => l.source === 'pixeldrain').length}`);
     console.log(`   🐙 Krakenfiles: ${uniqueLinks.filter(l => l.source === 'krakenfiles').length}`);
     console.log(`   🎬 Server: ${uniqueLinks.filter(l => l.source === 'server').length}`);
@@ -698,10 +741,6 @@ app.get('/episode/:slug', async (req, res) => {
     if (!streamUrl && uniqueLinks.length > 0) {
       streamUrl = uniqueLinks[0].url;
     }
-    
-    if (!streamUrl && data.defaultStreamingUrl) {
-      streamUrl = data.defaultStreamingUrl;
-    }
 
     res.json({
       status: 'Ok',
@@ -722,10 +761,11 @@ app.get('/episode/:slug', async (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'Online',
-    service: '🔥 Samehadaku - Pixeldrain + Krakenfiles + Server Priority',
-    version: '9.0.0',
+    service: '🔥 Samehadaku - Auto-Resolve Blogger + Pixeldrain + Krakenfiles',
+    version: '10.0.0',
     api: 'https://www.sankavollerei.com/anime/samehadaku',
     features: [
+      '🎬 AUTO-RESOLVE BLOGGER URLs (NEW!)',
       '💧 PIXELDRAIN PRIORITY (all resolutions)',
       '🐙 KRAKENFILES EXTRACTION (direct download)',
       '🎬 SERVER RESOLVER (streaming URLs)',
@@ -733,18 +773,17 @@ app.get('/', (req, res) => {
       '✅ Multi-quality: 360p-4K',
       '✅ MP4 + MKV formats',
       '✅ Safelink bypass',
-      '✅ Blogger/Google Video',
       '🎯 Direct streaming only',
-      'tes',
     ],
   });
 });
 
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(70)}`);
-  console.log(`🚀 SAMEHADAKU STREAMING - v9.0.0`);
+  console.log(`🚀 SAMEHADAKU STREAMING - v10.0.0`);
   console.log(`${'='.repeat(70)}`);
   console.log(`📡 Port: ${PORT}`);
+  console.log(`🎬 AUTO-RESOLVE BLOGGER URLs`);
   console.log(`💧 PIXELDRAIN PRIORITY`);
   console.log(`🐙 KRAKENFILES EXTRACTION`);
   console.log(`🎬 SERVER RESOLVER`);
