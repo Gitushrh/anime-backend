@@ -1,4 +1,4 @@
-// server.js - OTAKUDESU: DESUSTREAM + PIXELDRAIN + SAFELINK RESOLVER
+// server.js - OTAKUDESU API with NEW BASE URL
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -11,7 +11,8 @@ const PORT = process.env.PORT || 5000;
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-const BASE_API = 'https://www.sankavollerei.com/anime';
+// ✅ NEW BASE URL
+const BASE_API = 'https://api.otakudesu.natee.my.id/api';
 
 const httpsAgent = new https.Agent({
   rejectUnauthorized: false,
@@ -24,7 +25,7 @@ const axiosInstance = axios.create({
   httpsAgent,
   headers: {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept': 'application/json',
   },
   maxRedirects: 10,
   validateStatus: (status) => status < 500,
@@ -37,7 +38,6 @@ const axiosInstance = axios.create({
 function isDirectVideo(url) {
   const lower = url.toLowerCase();
   
-  // ✅ Desustream URL (main streaming for Otakudesu)
   if (lower.includes('desustream.info/dstream')) {
     return true;
   }
@@ -120,7 +120,7 @@ async function resolvePixeldrain(url) {
 }
 
 // ============================================
-// 🔥 SAFELINK BYPASS (for Otakudesu)
+// 🔥 SAFELINK BYPASS
 // ============================================
 
 async function resolveSafelink(url, depth = 0) {
@@ -193,13 +193,13 @@ async function resolveSafelink(url, depth = 0) {
 }
 
 // ============================================
-// 📡 PASSTHROUGH ENDPOINTS - OTAKUDESU
+// 📡 PASSTHROUGH ENDPOINTS - NEW API
 // ============================================
 
 // Home
 app.get('/anime/home', async (req, res) => {
   try {
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/home`);
+    const response = await axiosInstance.get(`${BASE_API}/home`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -209,7 +209,7 @@ app.get('/anime/home', async (req, res) => {
 // Schedule
 app.get('/anime/schedule', async (req, res) => {
   try {
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/schedule`);
+    const response = await axiosInstance.get(`${BASE_API}/schedule`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -220,7 +220,7 @@ app.get('/anime/schedule', async (req, res) => {
 app.get('/anime/ongoing-anime', async (req, res) => {
   try {
     const page = req.query.page || '1';
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/ongoing-anime?page=${page}`);
+    const response = await axiosInstance.get(`${BASE_API}/ongoing/${page}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -231,7 +231,7 @@ app.get('/anime/ongoing-anime', async (req, res) => {
 app.get('/anime/complete-anime/:page', async (req, res) => {
   try {
     const { page } = req.params;
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/complete-anime/${page}`);
+    const response = await axiosInstance.get(`${BASE_API}/complete/${page}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -241,7 +241,7 @@ app.get('/anime/complete-anime/:page', async (req, res) => {
 // Genre List
 app.get('/anime/genre', async (req, res) => {
   try {
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/genre`);
+    const response = await axiosInstance.get(`${BASE_API}/genre`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -253,7 +253,7 @@ app.get('/anime/genre/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
     const page = req.query.page || '1';
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/genre/${slug}?page=${page}`);
+    const response = await axiosInstance.get(`${BASE_API}/genre/${slug}?page=${page}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -264,7 +264,7 @@ app.get('/anime/genre/:slug', async (req, res) => {
 app.get('/anime/search/:keyword', async (req, res) => {
   try {
     const { keyword } = req.params;
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/search/${keyword}`);
+    const response = await axiosInstance.get(`${BASE_API}/search/${keyword}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -275,7 +275,7 @@ app.get('/anime/search/:keyword', async (req, res) => {
 app.get('/anime/anime/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/anime/${slug}`);
+    const response = await axiosInstance.get(`${BASE_API}/anime/${slug}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -286,28 +286,7 @@ app.get('/anime/anime/:slug', async (req, res) => {
 app.get('/anime/batch/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/batch/${slug}`);
-    res.json(response.data);
-  } catch (error) {
-    res.status(500).json({ status: 'Error', message: error.message });
-  }
-});
-
-// Server URL
-app.get('/anime/server/:serverId', async (req, res) => {
-  try {
-    const { serverId } = req.params;
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/server/${serverId}`);
-    res.json(response.data);
-  } catch (error) {
-    res.status(500).json({ status: 'Error', message: error.message });
-  }
-});
-
-// All Anime (Unlimited)
-app.get('/anime/unlimited', async (req, res) => {
-  try {
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/unlimited`);
+    const response = await axiosInstance.get(`${BASE_API}/batch/${slug}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -315,7 +294,7 @@ app.get('/anime/unlimited', async (req, res) => {
 });
 
 // ============================================
-// 🎯 MAIN EPISODE ENDPOINT - OTAKUDESU
+// 🎯 MAIN EPISODE ENDPOINT
 // ============================================
 
 app.get('/anime/episode/:slug', async (req, res) => {
@@ -325,10 +304,11 @@ app.get('/anime/episode/:slug', async (req, res) => {
     console.log(`🎬 OTAKUDESU EPISODE: ${slug}`);
     console.log(`${'='.repeat(70)}`);
     
-    const response = await axiosInstance.get(`${BASE_API}/otakudesu/episode/${slug}`);
+    // ✅ NEW ENDPOINT
+    const response = await axiosInstance.get(`${BASE_API}/episode/${slug}`);
     const episodeData = response.data;
 
-    if (!episodeData || episodeData.status !== 'success') {
+    if (!episodeData || !episodeData.data) {
       return res.status(404).json({ status: 'Error', message: 'Episode not found' });
     }
 
@@ -338,7 +318,7 @@ app.get('/anime/episode/:slug', async (req, res) => {
     console.log('\n🔥 PROCESSING: DESUSTREAM → PIXELDRAIN → SAFELINK\n');
 
     // ============================================
-    // 🎯 PRIORITY 1: DESUSTREAM URL (Main Streaming)
+    // 🎯 PRIORITY 1: DESUSTREAM URL
     // ============================================
     
     if (data.stream_url && data.stream_url.includes('desustream.info')) {
@@ -355,7 +335,7 @@ app.get('/anime/episode/:slug', async (req, res) => {
     }
 
     // ============================================
-    // 🎯 PRIORITY 2: DOWNLOAD URLs (for quality options)
+    // 🎯 PRIORITY 2: DOWNLOAD URLs
     // ============================================
     
     if (data.download_urls && data.download_urls.mp4) {
@@ -374,7 +354,6 @@ app.get('/anime/episode/:slug', async (req, res) => {
           const provider = urlData.provider || 'Unknown';
           const url = urlData.url || '';
           
-          // Skip file hosting
           const providerLower = provider.toLowerCase();
           if (providerLower.includes('gofile') || 
               providerLower.includes('mega') ||
@@ -407,7 +386,6 @@ app.get('/anime/episode/:slug', async (req, res) => {
           }
         }
         
-        // Try other providers if Pixeldrain not found
         if (!foundForResolution) {
           console.log(`   ⚠️ Trying other providers...`);
           
@@ -428,7 +406,6 @@ app.get('/anime/episode/:slug', async (req, res) => {
             
             let finalUrl = url;
             
-            // Try to resolve safelink
             if (url.includes('safelink') || url.includes('desustream.com/safelink')) {
               finalUrl = await resolveSafelink(url);
             }
@@ -463,10 +440,8 @@ app.get('/anime/episode/:slug', async (req, res) => {
       }
     }
 
-    // Sort by priority
     streamableLinks.sort((a, b) => a.priority - b.priority);
 
-    // Remove duplicates
     const uniqueLinks = [];
     const seenUrls = new Set();
     
@@ -484,7 +459,6 @@ app.get('/anime/episode/:slug', async (req, res) => {
     console.log(`   🎯 Total: ${uniqueLinks.length}`);
     console.log(`${'='.repeat(70)}\n`);
 
-    // Build stream_list
     const streamList = {};
     uniqueLinks.forEach(link => {
       if (link.quality && link.quality !== 'auto') {
@@ -494,7 +468,6 @@ app.get('/anime/episode/:slug', async (req, res) => {
       }
     });
 
-    // Main stream URL (prefer Desustream, then highest quality)
     let streamUrl = '';
     
     const desustreamLink = uniqueLinks.find(l => l.source === 'desustream');
@@ -543,11 +516,11 @@ app.get('/', (req, res) => {
   res.json({
     status: 'Online',
     service: '🔥 Otakudesu Streaming API',
-    version: '10.0.0',
-    api: 'https://www.sankavollerei.com/anime/otakudesu',
+    version: '11.0.0',
+    api: 'https://api.otakudesu.natee.my.id/api',
     features: [
-      '🎬 DESUSTREAM PRIORITY (main streaming)',
-      '💧 PIXELDRAIN SUPPORT (multi-quality)',
+      '🎬 DESUSTREAM PRIORITY',
+      '💧 PIXELDRAIN SUPPORT',
       '🔓 SAFELINK BYPASS',
       '✅ Multi-quality: 360p-1080p',
       '✅ MP4 format',
@@ -565,8 +538,6 @@ app.get('/', (req, res) => {
       detail: '/anime/anime/:slug',
       episode: '/anime/episode/:slug',
       batch: '/anime/batch/:slug',
-      server: '/anime/server/:serverId',
-      unlimited: '/anime/unlimited',
     },
   });
 });
@@ -577,12 +548,12 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(70)}`);
-  console.log(`🚀 OTAKUDESU STREAMING API - v10.0.0`);
+  console.log(`🚀 OTAKUDESU STREAMING API - v11.0.0`);
   console.log(`${'='.repeat(70)}`);
   console.log(`📡 Port: ${PORT}`);
+  console.log(`🌐 API: https://api.otakudesu.natee.my.id/api`);
   console.log(`🎬 DESUSTREAM PRIORITY`);
   console.log(`💧 PIXELDRAIN SUPPORT`);
   console.log(`🔓 SAFELINK BYPASS`);
-  console.log(`💾 NO STORAGE - Direct streaming`);
   console.log(`${'='.repeat(70)}\n`);
 });
