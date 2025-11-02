@@ -1,8 +1,9 @@
-// server.js - OTAKUDESU API v12.0 - RAW URLs Strategy
+// server.js - OTAKUDESU API v13.0 - DESUSTREAM VIDEO EXTRACTOR
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const https = require('https');
+const cheerio = require('cheerio'); // ✅ ADD THIS: npm install cheerio
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -30,40 +31,263 @@ const axiosInstance = axios.create({
 });
 
 // ============================================
-// 🔧 HELPERS
+// 🔧 DESUSTREAM VIDEO EXTRACTOR
 // ============================================
 
-function classifyUrl(url) {
-  const lower = url.toLowerCase();
-  
-  if (lower.includes('desustream.info/dstream')) {
-    return { type: 'desustream', streamable: true };
+async function extractDesustreamVideo(iframeUrl) {
+  try {
+    console.log('\n🎬 Extracting Desustream video...');
+    console.log(`   URL: ${iframeUrl}`);
+    
+    // Fetch iframe HTML
+    const response = await axios.get(iframeUrl, {
+      httpsAgent,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://otakudesu.cloud/',
+      },
+      timeout: 15000,
+    });
+    
+    const html = response.data;
+    const $ = cheerio.load(html);
+    
+    // Method 1: Find video tag
+    const videoSrc = $('video source').attr('src') || $('video').attr('src');
+    if (videoSrc) {
+      console.log(`   ✅ Found video tag: ${videoSrc}`);
+      return {
+        type: videoSrc.includes('.m3u8') ? 'hls' : 'mp4',
+        url: videoSrc,
+      };
+    }
+    
+    // Method 2: Find in script tags
+    const scripts = $('script').map((i, el) => $(el).html()).get();
+    
+    for (const script of scripts) {
+      if (!script) continue;
+      
+      // Look for .m3u8 URLs
+      const m3u8Match = script.match(/['"]([^'"]*\.m3u8[^'"]*)['"]/);
+      if (m3u8Match) {
+        console.log(`   ✅ Found HLS: ${m3u8Match[1]}`);
+        return {
+          type: 'hls',
+          url: m3u8Match[1],
+        };
+      }
+      
+      // Look for .mp4 URLs
+      const mp4Match = script.match(/['"]([^'"]*\.mp4[^'"]*)['"]/);
+      if (mp4Match) {
+        console.log(`   ✅ Found MP4: ${mp4Match[1]}`);
+        return {
+          type: 'mp4',
+          url: mp4Match[1],
+        };
+      }
+    }
+    
+    console.log('   ⚠️ No direct video URL found');
+    return null;
+    
+  } catch (error) {
+    console.error(`   ❌ Extract error: ${error.message}`);
+    return null;
   }
-  
-  if (lower.includes('pixeldrain.com')) {
-    return { type: 'pixeldrain', streamable: true };
-  }
-  
-  if (lower.includes('pdrain.com')) {
-    return { type: 'pdrain', streamable: true };
-  }
-  
-  if (lower.includes('googlevideo.com') || lower.includes('videoplayback')) {
-    return { type: 'googlevideo', streamable: true };
-  }
-  
-  if (lower.includes('acefile.co') || lower.includes('gofile.io') || 
-      lower.includes('mega.nz') || lower.includes('mediafire.com')) {
-    return { type: 'file_hosting', streamable: false };
-  }
-  
-  if (lower.endsWith('.mp4') || lower.endsWith('.m3u8') || 
-      lower.includes('.mp4?') || lower.includes('.m3u8?')) {
-    return { type: 'direct_video', streamable: true };
-  }
-  
-  return { type: 'unknown', streamable: false };
 }
+
+// ============================================
+// 🎯 EPISODE ENDPOINT - WITH VIDEO EXTRACTION
+// ============================================
+
+app.get('/anime/episode/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`🎬 EPISODE: ${slug}`);
+    console.log(`${'='.repeat(70)}`);
+    
+    const response = await axiosInstance.get(`${BASE_API}/episode/${slug}`);
+    const episodeData = response.data;
+
+    if (!episodeData || !episodeData.data) {
+      return res.status(404).json({ status: 'Error', message: 'Episode not found' });
+    }
+
+    const data = episodeData.data;
+    const processedLinks = [];
+
+    console.log('\n📦 PROCESSING LINKS\n');
+
+    // ✅ STEP 1: Extract REAL video URL from Desustream iframe
+    if (data.stream_url && data.stream_url.includes('desustream.info')) {
+      console.log('🎬 Extracting Desustream video URL...');
+      
+      const extracted = await extractDesustreamVideo(data.stream_url);
+      
+      if (extracted) {
+        processedLinks.push({
+          provider: 'Desustream',
+          url: extracted.url,
+          type: extracted.type,
+          quality: 'auto',
+          source: 'desustream',
+          streamable: true,
+          priority: 0,
+        });
+        
+        console.log(`✅ Desustream ${extracted.type.toUpperCase()} extracted`);
+      } else {
+        console.log('⚠️ Desustream extraction failed, using iframe');
+        
+        // Fallback: use iframe URL
+        processedLinks.push({
+          provider: 'Desustream (iframe)',
+          url: data.stream_url,
+          type: 'iframe',
+          quality: 'auto',
+          source: 'desustream',
+          streamable: false, // ❌ iframe not streamable
+          priority: 99,
+        });
+      }
+    }
+
+    // ✅ STEP 2: Download URLs (Pixeldrain priority)
+    if (data.download_urls && data.download_urls.mp4) {
+      const mp4Downloads = data.download_urls.mp4;
+      
+      for (const resolutionData of mp4Downloads) {
+        const resolution = resolutionData.resolution || 'auto';
+        const urls = resolutionData.urls || [];
+        
+        console.log(`\n🎯 ${resolution}:`);
+        
+        for (const urlData of urls) {
+          const provider = urlData.provider || 'Unknown';
+          const url = urlData.url || '';
+          
+          if (!url.startsWith('http')) continue;
+          
+          // Priority: Pixeldrain > Others
+          const isPdrain = url.toLowerCase().includes('pixeldrain') || 
+                          url.toLowerCase().includes('pdrain');
+          
+          processedLinks.push({
+            provider: `${provider} ${resolution}`,
+            url: url,
+            type: 'mp4',
+            quality: resolution,
+            source: isPdrain ? 'pixeldrain' : 'download',
+            streamable: true,
+            priority: isPdrain ? 1 : 2,
+          });
+          
+          console.log(`   ✅ ${provider} - ${isPdrain ? 'pixeldrain' : 'download'}`);
+        }
+      }
+    }
+
+    // Sort by priority
+    processedLinks.sort((a, b) => a.priority - b.priority);
+
+    // Remove duplicates
+    const uniqueLinks = [];
+    const seenUrls = new Set();
+    
+    for (const link of processedLinks) {
+      if (!seenUrls.has(link.url)) {
+        seenUrls.add(link.url);
+        uniqueLinks.push(link);
+      }
+    }
+
+    console.log(`\n📊 RESULTS:`);
+    console.log(`   🎬 Desustream: ${uniqueLinks.filter(l => l.source === 'desustream').length}`);
+    console.log(`   💧 Pixeldrain: ${uniqueLinks.filter(l => l.source === 'pixeldrain').length}`);
+    console.log(`   📦 Others: ${uniqueLinks.filter(l => l.source === 'download').length}`);
+    console.log(`   🎯 Total: ${uniqueLinks.length}`);
+    console.log(`${'='.repeat(70)}\n`);
+
+    // Build stream_list
+    const streamList = {};
+    uniqueLinks.forEach(link => {
+      if (link.quality && link.quality !== 'auto' && link.streamable) {
+        if (!streamList[link.quality]) {
+          streamList[link.quality] = link.url;
+        }
+      }
+    });
+
+    // Select default stream_url (prioritize streamable)
+    let streamUrl = '';
+    
+    const streamableLinks = uniqueLinks.filter(l => l.streamable);
+    
+    if (streamableLinks.length > 0) {
+      streamUrl = streamableLinks[0].url;
+    } else if (uniqueLinks.length > 0) {
+      streamUrl = uniqueLinks[0].url;
+    } else if (data.stream_url) {
+      streamUrl = data.stream_url;
+    }
+
+    res.json({
+      status: 'success',
+      data: {
+        ...data,
+        stream_url: streamUrl,
+        stream_list: streamList,
+        resolved_links: uniqueLinks,
+      }
+    });
+
+  } catch (error) {
+    console.error('\n❌ ERROR:', error.message);
+    res.status(500).json({ status: 'Error', message: error.message });
+  }
+});
+
+// ============================================
+// 🔥 PIXELDRAIN RESOLVER
+// ============================================
+
+app.get('/api/resolve/pixeldrain/:fileId', async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    
+    console.log(`\n💧 Resolving Pixeldrain: ${fileId}`);
+    
+    const directUrl = `https://pixeldrain.com/api/file/${fileId}`;
+    
+    const testResponse = await axiosInstance.head(directUrl, {
+      timeout: 5000,
+      validateStatus: () => true,
+    });
+    
+    if (testResponse.status === 200 || testResponse.status === 206) {
+      console.log(`✅ Pixeldrain accessible`);
+      
+      res.json({
+        status: 'success',
+        url: directUrl,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Accept': 'video/*',
+        }
+      });
+    } else {
+      console.log(`❌ Pixeldrain not accessible: ${testResponse.status}`);
+      res.status(404).json({ status: 'Error', message: 'File not accessible' });
+    }
+    
+  } catch (error) {
+    console.error(`❌ Pixeldrain error: ${error.message}`);
+    res.status(500).json({ status: 'Error', message: error.message });
+  }
+});
 
 // ============================================
 // 📡 PASSTHROUGH ENDPOINTS
@@ -158,200 +382,6 @@ app.get('/anime/batch/:slug', async (req, res) => {
 });
 
 // ============================================
-// 🎯 EPISODE ENDPOINT - RAW URLs Strategy
-// ============================================
-
-app.get('/anime/episode/:slug', async (req, res) => {
-  try {
-    const { slug } = req.params;
-    console.log(`\n${'='.repeat(70)}`);
-    console.log(`🎬 EPISODE: ${slug}`);
-    console.log(`${'='.repeat(70)}`);
-    
-    const response = await axiosInstance.get(`${BASE_API}/episode/${slug}`);
-    const episodeData = response.data;
-
-    if (!episodeData || !episodeData.data) {
-      return res.status(404).json({ status: 'Error', message: 'Episode not found' });
-    }
-
-    const data = episodeData.data;
-    const processedLinks = [];
-
-    console.log('\n📦 PROCESSING RAW URLs (NO RESOLVE)\n');
-
-    // ✅ PRIORITY 1: Main stream_url (Desustream)
-    if (data.stream_url && data.stream_url.includes('desustream.info')) {
-      const classification = classifyUrl(data.stream_url);
-      
-      processedLinks.push({
-        provider: 'Desustream',
-        url: data.stream_url,
-        type: data.stream_url.includes('.m3u8') ? 'hls' : 'iframe',
-        quality: 'auto',
-        source: 'desustream',
-        classification: classification.type,
-        streamable: classification.streamable,
-        priority: 0,
-      });
-      
-      console.log('✅ Desustream URL added');
-    }
-
-    // ✅ PRIORITY 2: Download URLs (RAW - resolve di frontend)
-    if (data.download_urls && data.download_urls.mp4) {
-      const mp4Downloads = data.download_urls.mp4;
-      
-      for (const resolutionData of mp4Downloads) {
-        const resolution = resolutionData.resolution || 'auto';
-        const urls = resolutionData.urls || [];
-        
-        console.log(`\n🎯 ${resolution}:`);
-        
-        for (const urlData of urls) {
-          const provider = urlData.provider || 'Unknown';
-          const url = urlData.url || '';
-          
-          if (!url.startsWith('http')) continue;
-          
-          const classification = classifyUrl(url);
-          
-          // Skip file hosting
-          if (!classification.streamable) {
-            console.log(`   ⏭️ Skip ${provider} (file hosting)`);
-            continue;
-          }
-          
-          // Add raw URL - frontend akan resolve
-          processedLinks.push({
-            provider: `${provider} ${resolution}`,
-            url: url, // ✅ RAW URL
-            type: 'mp4',
-            quality: resolution,
-            source: classification.type,
-            classification: classification.type,
-            streamable: classification.streamable,
-            priority: classification.type === 'pixeldrain' ? 1 : 2,
-          });
-          
-          console.log(`   ✅ ${provider} - ${classification.type}`);
-        }
-      }
-    }
-
-    // Sort by priority
-    processedLinks.sort((a, b) => a.priority - b.priority);
-
-    // Remove duplicates
-    const uniqueLinks = [];
-    const seenUrls = new Set();
-    
-    for (const link of processedLinks) {
-      if (!seenUrls.has(link.url)) {
-        seenUrls.add(link.url);
-        uniqueLinks.push(link);
-      }
-    }
-
-    console.log(`\n📊 RESULTS:`);
-    console.log(`   🎬 Desustream: ${uniqueLinks.filter(l => l.source === 'desustream').length}`);
-    console.log(`   💧 Pixeldrain: ${uniqueLinks.filter(l => l.source === 'pixeldrain').length}`);
-    console.log(`   📦 Others: ${uniqueLinks.filter(l => l.source !== 'desustream' && l.source !== 'pixeldrain').length}`);
-    console.log(`   🎯 Total: ${uniqueLinks.length}`);
-    console.log(`${'='.repeat(70)}\n`);
-
-    // Build stream_list for quality selector
-    const streamList = {};
-    uniqueLinks.forEach(link => {
-      if (link.quality && link.quality !== 'auto') {
-        if (!streamList[link.quality]) {
-          streamList[link.quality] = link.url;
-        }
-      }
-    });
-
-    // Select default stream_url
-    let streamUrl = '';
-    
-    const desustreamLink = uniqueLinks.find(l => l.source === 'desustream');
-    if (desustreamLink) {
-      streamUrl = desustreamLink.url;
-    } else {
-      const qualities = ['1080p', '720p', '480p', '360p'];
-      for (const q of qualities) {
-        const link = uniqueLinks.find(l => l.quality === q);
-        if (link) {
-          streamUrl = link.url;
-          break;
-        }
-      }
-    }
-    
-    if (!streamUrl && uniqueLinks.length > 0) {
-      streamUrl = uniqueLinks[0].url;
-    }
-    
-    if (!streamUrl && data.stream_url) {
-      streamUrl = data.stream_url;
-    }
-
-    res.json({
-      status: 'success',
-      data: {
-        ...data,
-        stream_url: streamUrl,
-        stream_list: streamList,
-        resolved_links: uniqueLinks, // ✅ RAW URLs
-      }
-    });
-
-  } catch (error) {
-    console.error('\n❌ ERROR:', error.message);
-    res.status(500).json({ status: 'Error', message: error.message });
-  }
-});
-
-// ============================================
-// 🔥 PIXELDRAIN RESOLVER (For Frontend)
-// ============================================
-
-app.get('/api/resolve/pixeldrain/:fileId', async (req, res) => {
-  try {
-    const { fileId } = req.params;
-    
-    console.log(`\n💧 Resolving Pixeldrain: ${fileId}`);
-    
-    const directUrl = `https://pixeldrain.com/api/file/${fileId}`;
-    
-    // Test if accessible
-    const testResponse = await axiosInstance.head(directUrl, {
-      timeout: 5000,
-      validateStatus: () => true,
-    });
-    
-    if (testResponse.status === 200 || testResponse.status === 206) {
-      console.log(`✅ Pixeldrain accessible`);
-      
-      res.json({
-        status: 'success',
-        url: directUrl,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-          'Accept': 'video/*',
-        }
-      });
-    } else {
-      console.log(`❌ Pixeldrain not accessible: ${testResponse.status}`);
-      res.status(404).json({ status: 'Error', message: 'File not accessible' });
-    }
-    
-  } catch (error) {
-    console.error(`❌ Pixeldrain error: ${error.message}`);
-    res.status(500).json({ status: 'Error', message: error.message });
-  }
-});
-
-// ============================================
 // 🏠 ROOT
 // ============================================
 
@@ -359,15 +389,14 @@ app.get('/', (req, res) => {
   res.json({
     status: 'Online',
     service: '🔥 Otakudesu Streaming API',
-    version: '12.0.0 - SIMPLIFIED',
+    version: '13.0.0 - VIDEO EXTRACTOR',
     api: 'https://api.otakudesu.natee.my.id/api',
-    strategy: 'RAW URLs → Frontend Resolve On-Demand',
+    strategy: 'Extract Real Video URLs from Desustream + Pixeldrain Fallback',
     features: [
-      '🎬 DESUSTREAM - Direct iframe',
-      '💧 PIXELDRAIN - Resolve on frontend',
-      '📦 RAW URLs - No pre-resolve',
-      '✅ Multi-quality support',
-      '🎯 Frontend quality switching',
+      '🎬 DESUSTREAM - Extract real video URL from iframe',
+      '💧 PIXELDRAIN - Direct playback',
+      '📦 Multi-quality support',
+      '✅ Automatic fallback',
     ],
     endpoints: {
       home: '/anime/home',
@@ -391,10 +420,10 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(70)}`);
-  console.log(`🚀 OTAKUDESU API - v12.0 SIMPLIFIED`);
+  console.log(`🚀 OTAKUDESU API - v13.0 VIDEO EXTRACTOR`);
   console.log(`${'='.repeat(70)}`);
   console.log(`📡 Port: ${PORT}`);
-  console.log(`🎬 Strategy: RAW URLs + Frontend Resolve`);
-  console.log(`💧 Pixeldrain: On-demand resolution`);
+  console.log(`🎬 Strategy: Extract real video URLs`);
+  console.log(`💧 Pixeldrain: Direct playback`);
   console.log(`${'='.repeat(70)}\n`);
 });
