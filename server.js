@@ -1,4 +1,4 @@
-// server.js - SAMEHADAKU: PIXELDRAIN + KRAKENFILES + SERVER RESOLVER
+// server.js - OTAKUDESU: DESUSTREAM + PIXELDRAIN + SAFELINK RESOLVER
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -37,6 +37,11 @@ const axiosInstance = axios.create({
 function isDirectVideo(url) {
   const lower = url.toLowerCase();
   
+  // ✅ Desustream URL (main streaming for Otakudesu)
+  if (lower.includes('desustream.info/dstream')) {
+    return true;
+  }
+  
   if (lower.includes('googlevideo.com') || lower.includes('videoplayback')) {
     return true;
   }
@@ -53,10 +58,6 @@ function isDirectVideo(url) {
   if (lower.includes('pixeldrain.com/u/')) {
     return true;
   }
-
-  if (lower.includes('krakenfiles.com/getfile/')) {
-    return true;
-  }
   
   return false;
 }
@@ -70,8 +71,6 @@ function isFileHosting(url) {
     'mega.nz',
     'mediafire.com',
     'drive.google.com/file/',
-    'otakufiles.net/login',
-    'filedon.co',
   ];
   
   for (const host of blockedHosts) {
@@ -121,86 +120,7 @@ async function resolvePixeldrain(url) {
 }
 
 // ============================================
-// 🔥 KRAKENFILES RESOLVER
-// ============================================
-
-async function resolveKrakenfiles(url) {
-  console.log('      🐙 Resolving Krakenfiles...');
-  
-  try {
-    // Extract file ID
-    // https://krakenfiles.com/view/XYZ123/file.html
-    const viewMatch = url.match(/krakenfiles\.com\/view\/([a-zA-Z0-9_-]+)/);
-    
-    if (!viewMatch) {
-      console.log('      ❌ Could not extract Krakenfiles ID');
-      return null;
-    }
-    
-    const fileId = viewMatch[1];
-    
-    // Try scraping the page
-    const response = await axiosInstance.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Referer': 'https://krakenfiles.com/',
-      },
-    });
-
-    const $ = cheerio.load(response.data);
-    
-    let directUrl = null;
-    
-    // Method 1: Download button
-    const downloadBtn = $('a.download-button, a[href*="/download/"], a.btn-download, a[href*="/getfile/"]');
-    if (downloadBtn.length > 0) {
-      directUrl = downloadBtn.attr('href');
-    }
-    
-    // Method 2: Look in scripts for download URL
-    if (!directUrl) {
-      $('script').each((i, script) => {
-        const content = $(script).html();
-        if (content && content.includes('download')) {
-          const urlMatch = content.match(/https?:\/\/[^"'\s]*krakenfiles[^"'\s]*(\/download|\/getfile)[^"'\s]*/);
-          if (urlMatch) {
-            directUrl = urlMatch[0];
-          }
-        }
-      });
-    }
-    
-    // Method 3: Construct getfile URL (most reliable)
-    if (!directUrl) {
-      directUrl = `https://krakenfiles.com/getfile/${fileId}`;
-    }
-    
-    if (directUrl) {
-      // Clean up URL
-      directUrl = directUrl.replace(/\\u0026/g, '&').replace(/\\\//g, '/');
-      
-      // Make sure it's absolute
-      if (directUrl.startsWith('/')) {
-        directUrl = `https://krakenfiles.com${directUrl}`;
-      }
-      
-      console.log(`      ✅ Krakenfiles: ${fileId}`);
-      return directUrl;
-    }
-    
-    console.log('      ❌ Could not find Krakenfiles download link');
-    return null;
-    
-  } catch (error) {
-    console.log(`      ❌ Krakenfiles error: ${error.message}`);
-  }
-  
-  return null;
-}
-
-// ============================================
-// 🔥 SAFELINK BYPASS
+// 🔥 SAFELINK BYPASS (for Otakudesu)
 // ============================================
 
 async function resolveSafelink(url, depth = 0) {
@@ -228,10 +148,6 @@ async function resolveSafelink(url, depth = 0) {
       return await resolvePixeldrain(finalUrl);
     }
     
-    if (finalUrl.includes('krakenfiles.com')) {
-      return await resolveKrakenfiles(finalUrl);
-    }
-    
     if (isDirectVideo(finalUrl)) {
       console.log(`      ✅ Direct video found`);
       return finalUrl;
@@ -242,9 +158,8 @@ async function resolveSafelink(url, depth = 0) {
     const selectors = [
       '#link',
       '.link',
-      'a[href*="blogger"]',
+      'a[href*="desustream"]',
       'a[href*="pixeldrain"]',
-      'a[href*="krakenfiles"]',
       'a.btn-download',
     ];
     
@@ -263,10 +178,6 @@ async function resolveSafelink(url, depth = 0) {
         if (href.includes('pixeldrain.com')) {
           return await resolvePixeldrain(href);
         }
-
-        if (href.includes('krakenfiles.com')) {
-          return await resolveKrakenfiles(href);
-        }
         
         if (isDirectVideo(href)) {
           return href;
@@ -282,137 +193,121 @@ async function resolveSafelink(url, depth = 0) {
 }
 
 // ============================================
-// 🔥 BLOGGER RESOLVER
+// 📡 PASSTHROUGH ENDPOINTS - OTAKUDESU
 // ============================================
 
-async function resolveBlogger(url) {
-  console.log('      🎬 Resolving Blogger...');
-  
+// Home
+app.get('/anime/home', async (req, res) => {
   try {
-    const response = await axiosInstance.get(url, {
-      headers: {
-        'Referer': 'https://www.blogger.com/',
-        'Origin': 'https://www.blogger.com',
-      },
-    });
-
-    const html = response.data;
-    
-    const videoPattern = /https?:\/\/[^"'\s]*googlevideo\.com[^"'\s]*/g;
-    const matches = html.match(videoPattern);
-    
-    if (matches && matches.length > 0) {
-      const videoUrl = matches[0]
-        .replace(/\\u0026/g, '&')
-        .replace(/\\\//g, '/')
-        .replace(/\\/g, '');
-      
-      console.log(`      ✅ Blogger resolved`);
-      return videoUrl;
-    }
-
-  } catch (error) {
-    console.log(`      ❌ Blogger error: ${error.message}`);
-  }
-  
-  return null;
-}
-
-// ============================================
-// 🔥 SERVER RESOLVER (for streaming links)
-// ============================================
-
-async function resolveServer(serverId) {
-  console.log(`      🎬 Resolving server: ${serverId}`);
-  
-  try {
-    const response = await axiosInstance.get(`${BASE_API}/samehadaku/server/${serverId}`);
-    
-    if (response.data && response.data.status === 'success') {
-      const data = response.data.data;
-      
-      if (data.stream_url) {
-        console.log(`      ✅ Server resolved`);
-        return data.stream_url;
-      }
-    }
-    
-  } catch (error) {
-    console.log(`      ❌ Server error: ${error.message}`);
-  }
-  
-  return null;
-}
-
-// ============================================
-// 📡 PASSTHROUGH ENDPOINTS
-// ============================================
-
-const passthroughEndpoints = [
-  '/home',
-  '/recent',
-  '/search',
-  '/schedule',
-  '/ongoing',
-  '/completed',
-  '/popular',
-  '/movies',
-  '/list',
-  '/genres',
-  '/batch',
-];
-
-passthroughEndpoints.forEach(endpoint => {
-  app.get(endpoint, async (req, res) => {
-    try {
-      const queryString = Object.keys(req.query)
-        .map(key => `${key}=${req.query[key]}`)
-        .join('&');
-      
-      const url = `${BASE_API}/samehadaku${endpoint}${queryString ? '?' + queryString : ''}`;
-      const response = await axiosInstance.get(url);
-      res.json(response.data);
-    } catch (error) {
-      res.status(500).json({ status: 'Error', message: error.message });
-    }
-  });
-});
-
-app.get('/anime/:slug', async (req, res) => {
-  try {
-    const { slug } = req.params;
-    const response = await axiosInstance.get(`${BASE_API}/samehadaku/anime/${slug}`);
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/home`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
   }
 });
 
-app.get('/genres/:slug', async (req, res) => {
+// Schedule
+app.get('/anime/schedule', async (req, res) => {
+  try {
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/schedule`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'Error', message: error.message });
+  }
+});
+
+// Ongoing Anime
+app.get('/anime/ongoing-anime', async (req, res) => {
+  try {
+    const page = req.query.page || '1';
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/ongoing-anime?page=${page}`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'Error', message: error.message });
+  }
+});
+
+// Complete Anime
+app.get('/anime/complete-anime/:page', async (req, res) => {
+  try {
+    const { page } = req.params;
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/complete-anime/${page}`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'Error', message: error.message });
+  }
+});
+
+// Genre List
+app.get('/anime/genre', async (req, res) => {
+  try {
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/genre`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'Error', message: error.message });
+  }
+});
+
+// Anime by Genre
+app.get('/anime/genre/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
     const page = req.query.page || '1';
-    const response = await axiosInstance.get(`${BASE_API}/samehadaku/genres/${slug}?page=${page}`);
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/genre/${slug}?page=${page}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
   }
 });
 
-app.get('/batch/:slug', async (req, res) => {
+// Search
+app.get('/anime/search/:keyword', async (req, res) => {
+  try {
+    const { keyword } = req.params;
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/search/${keyword}`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'Error', message: error.message });
+  }
+});
+
+// Anime Detail
+app.get('/anime/anime/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
-    const response = await axiosInstance.get(`${BASE_API}/samehadaku/batch/${slug}`);
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/anime/${slug}`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
   }
 });
 
-app.get('/server/:serverId', async (req, res) => {
+// Batch
+app.get('/anime/batch/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/batch/${slug}`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'Error', message: error.message });
+  }
+});
+
+// Server URL
+app.get('/anime/server/:serverId', async (req, res) => {
   try {
     const { serverId } = req.params;
-    const response = await axiosInstance.get(`${BASE_API}/samehadaku/server/${serverId}`);
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/server/${serverId}`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'Error', message: error.message });
+  }
+});
+
+// All Anime (Unlimited)
+app.get('/anime/unlimited', async (req, res) => {
+  try {
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/unlimited`);
     res.json(response.data);
   } catch (error) {
     res.status(500).json({ status: 'Error', message: error.message });
@@ -420,17 +315,17 @@ app.get('/server/:serverId', async (req, res) => {
 });
 
 // ============================================
-// 🎯 MAIN EPISODE ENDPOINT - PIXELDRAIN + KRAKENFILES + SERVER
+// 🎯 MAIN EPISODE ENDPOINT - OTAKUDESU
 // ============================================
 
-app.get('/episode/:slug', async (req, res) => {
+app.get('/anime/episode/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
     console.log(`\n${'='.repeat(70)}`);
-    console.log(`🎬 EPISODE: ${slug}`);
+    console.log(`🎬 OTAKUDESU EPISODE: ${slug}`);
     console.log(`${'='.repeat(70)}`);
     
-    const response = await axiosInstance.get(`${BASE_API}/samehadaku/episode/${slug}`);
+    const response = await axiosInstance.get(`${BASE_API}/otakudesu/episode/${slug}`);
     const episodeData = response.data;
 
     if (!episodeData || episodeData.status !== 'success') {
@@ -440,116 +335,70 @@ app.get('/episode/:slug', async (req, res) => {
     const data = episodeData.data;
     const streamableLinks = [];
 
-    console.log('\n🔥 PROCESSING: PIXELDRAIN → KRAKENFILES → SERVER → FALLBACK\n');
+    console.log('\n🔥 PROCESSING: DESUSTREAM → PIXELDRAIN → SAFELINK\n');
 
     // ============================================
-    // 🎯 PRIORITY 1: PROCESS DOWNLOAD URLs
+    // 🎯 PRIORITY 1: DESUSTREAM URL (Main Streaming)
     // ============================================
     
-    if (data.downloadUrl && data.downloadUrl.formats) {
-      const allDownloads = [];
+    if (data.stream_url && data.stream_url.includes('desustream.info')) {
+      console.log('🎬 Main Desustream URL found');
+      streamableLinks.push({
+        provider: 'Desustream Auto',
+        url: data.stream_url,
+        type: data.stream_url.includes('.m3u8') ? 'hls' : 'mp4',
+        quality: 'auto',
+        source: 'desustream',
+        priority: 0,
+      });
+      console.log('   ✅ ADDED (PRIORITY 0 - MAIN)\n');
+    }
+
+    // ============================================
+    // 🎯 PRIORITY 2: DOWNLOAD URLs (for quality options)
+    // ============================================
+    
+    if (data.download_urls && data.download_urls.mp4) {
+      const mp4Downloads = data.download_urls.mp4;
       
-      // Collect all download links
-      for (const format of data.downloadUrl.formats) {
-        const formatType = format.title || 'Unknown';
-        
-        if (format.qualities && Array.isArray(format.qualities)) {
-          for (const qualityGroup of format.qualities) {
-            const resolution = qualityGroup.title?.trim() || 'auto';
-            
-            if (qualityGroup.urls && Array.isArray(qualityGroup.urls)) {
-              for (const urlData of qualityGroup.urls) {
-                const provider = urlData.title?.trim() || 'Unknown';
-                const url = urlData.url;
-                
-                if (url && url.startsWith('http')) {
-                  allDownloads.push({
-                    provider,
-                    url,
-                    resolution,
-                    format: formatType,
-                  });
-                }
-              }
-            }
-          }
-        }
-      }
-      
-      // Group by resolution
-      const resolutionGroups = {};
-      
-      for (const dl of allDownloads) {
-        const resolution = dl.resolution;
-        
-        if (!resolutionGroups[resolution]) {
-          resolutionGroups[resolution] = {
-            pixeldrain: [],
-            krakenfiles: [],
-            others: [],
-            format: dl.format,
-          };
-        }
-        
-        const urlLower = dl.url.toLowerCase();
-        
-        if (urlLower.includes('pixeldrain.com')) {
-          resolutionGroups[resolution].pixeldrain.push(dl);
-        } else if (urlLower.includes('krakenfiles.com') || urlLower.includes('kfiles.pro')) {
-          resolutionGroups[resolution].krakenfiles.push(dl);
-        } else {
-          resolutionGroups[resolution].others.push(dl);
-        }
-      }
-      
-      // Process each resolution: PIXELDRAIN → KRAKENFILES → OTHERS
-      for (const [resolution, group] of Object.entries(resolutionGroups)) {
-        let foundForResolution = false;
+      for (const resolutionData of mp4Downloads) {
+        const resolution = resolutionData.resolution || 'auto';
+        const urls = resolutionData.urls || [];
         
         console.log(`\n🎯 ${resolution}:`);
         
-        // 1️⃣ TRY PIXELDRAIN FIRST
-        for (const dl of group.pixeldrain) {
-          console.log(`   💧 Pixeldrain - ${dl.provider}`);
-          
-          let finalUrl = await resolvePixeldrain(dl.url);
-          
-          if (finalUrl && !isFileHosting(finalUrl)) {
-            streamableLinks.push({
-              provider: `Pixeldrain ${resolution}`,
-              url: finalUrl,
-              type: group.format.toLowerCase().includes('mkv') ? 'mkv' : 'mp4',
-              quality: resolution.replace(/\s+/g, ''),
-              source: 'pixeldrain',
-              priority: 1,
-            });
-            
-            console.log(`      ✅ ADDED (PRIORITY 1)\n`);
-            foundForResolution = true;
-            break;
-          } else {
-            console.log(`      ❌ Failed\n`);
-          }
-        }
+        let foundForResolution = false;
         
-        // 2️⃣ TRY KRAKENFILES IF NO PIXELDRAIN
-        if (!foundForResolution) {
-          for (const dl of group.krakenfiles) {
-            console.log(`   🐙 Krakenfiles - ${dl.provider}`);
+        // Try Pixeldrain first
+        for (const urlData of urls) {
+          const provider = urlData.provider || 'Unknown';
+          const url = urlData.url || '';
+          
+          // Skip file hosting
+          const providerLower = provider.toLowerCase();
+          if (providerLower.includes('gofile') || 
+              providerLower.includes('mega') ||
+              providerLower.includes('acefile')) {
+            console.log(`   ⏭️ Skipping ${provider} (file hosting)`);
+            continue;
+          }
+          
+          if (url.toLowerCase().includes('pixeldrain.com')) {
+            console.log(`   💧 Pixeldrain - ${provider}`);
             
-            let finalUrl = await resolveKrakenfiles(dl.url);
+            const finalUrl = await resolvePixeldrain(url);
             
             if (finalUrl && !isFileHosting(finalUrl)) {
               streamableLinks.push({
-                provider: `Krakenfiles ${resolution}`,
+                provider: `Pixeldrain ${resolution}`,
                 url: finalUrl,
-                type: group.format.toLowerCase().includes('mkv') ? 'mkv' : 'mp4',
-                quality: resolution.replace(/\s+/g, ''),
-                source: 'krakenfiles',
-                priority: 2,
+                type: 'mp4',
+                quality: resolution,
+                source: 'pixeldrain',
+                priority: 1,
               });
               
-              console.log(`      ✅ ADDED (PRIORITY 2)\n`);
+              console.log(`      ✅ ADDED (PRIORITY 1)\n`);
               foundForResolution = true;
               break;
             } else {
@@ -558,19 +407,30 @@ app.get('/episode/:slug', async (req, res) => {
           }
         }
         
-        // 3️⃣ FALLBACK TO OTHER PROVIDERS
+        // Try other providers if Pixeldrain not found
         if (!foundForResolution) {
-          console.log(`   ⚠️ Trying fallbacks...`);
+          console.log(`   ⚠️ Trying other providers...`);
           
-          for (const dl of group.others) {
-            console.log(`   📦 ${dl.provider}`);
+          for (const urlData of urls) {
+            const provider = urlData.provider || 'Unknown';
+            const url = urlData.url || '';
             
-            let finalUrl = null;
+            if (!url.startsWith('http')) continue;
             
-            if (dl.url.includes('safelink') || dl.url.includes('desustream.com/safelink')) {
-              finalUrl = await resolveSafelink(dl.url);
-            } else {
-              finalUrl = dl.url;
+            const providerLower = provider.toLowerCase();
+            if (providerLower.includes('gofile') || 
+                providerLower.includes('mega') ||
+                providerLower.includes('acefile')) {
+              continue;
+            }
+            
+            console.log(`   📦 ${provider}`);
+            
+            let finalUrl = url;
+            
+            // Try to resolve safelink
+            if (url.includes('safelink') || url.includes('desustream.com/safelink')) {
+              finalUrl = await resolveSafelink(url);
             }
             
             if (!finalUrl || isFileHosting(finalUrl)) {
@@ -578,19 +438,14 @@ app.get('/episode/:slug', async (req, res) => {
               continue;
             }
             
-            if (finalUrl.includes('blogger.com') || finalUrl.includes('blogspot.com')) {
-              const bloggerUrl = await resolveBlogger(finalUrl);
-              if (bloggerUrl) finalUrl = bloggerUrl;
-            }
-            
             if (isDirectVideo(finalUrl)) {
               streamableLinks.push({
-                provider: `${dl.provider} ${resolution}`,
+                provider: `${provider} ${resolution}`,
                 url: finalUrl,
-                type: group.format.toLowerCase().includes('mkv') ? 'mkv' : 'mp4',
-                quality: resolution.replace(/\s+/g, ''),
+                type: 'mp4',
+                quality: resolution,
                 source: 'fallback',
-                priority: 3,
+                priority: 2,
               });
               
               console.log(`      ✅ ADDED (FALLBACK)\n`);
@@ -604,49 +459,6 @@ app.get('/episode/:slug', async (req, res) => {
         
         if (!foundForResolution) {
           console.log(`   ❌ No sources for ${resolution}\n`);
-        }
-      }
-    }
-
-    // ============================================
-    // 🎯 PRIORITY 2: PROCESS SERVER URLs (for streaming)
-    // ============================================
-    
-    if (data.server && data.server.qualities) {
-      console.log('\n🎬 Processing streaming servers...');
-      
-      for (const qualityGroup of data.server.qualities) {
-        const quality = qualityGroup.title || 'auto';
-        
-        if (qualityGroup.serverList && Array.isArray(qualityGroup.serverList)) {
-          for (const server of qualityGroup.serverList) {
-            const serverId = server.serverId;
-            const serverName = server.title || 'Unknown';
-            
-            console.log(`   🎬 ${serverName} (${quality})`);
-            
-            const streamUrl = await resolveServer(serverId);
-            
-            if (streamUrl && isDirectVideo(streamUrl)) {
-              // Check if not duplicate
-              if (!streamableLinks.some(l => l.url === streamUrl)) {
-                streamableLinks.push({
-                  provider: `${serverName} ${quality}`,
-                  url: streamUrl,
-                  type: streamUrl.includes('.m3u8') ? 'hls' : 'mp4',
-                  quality: quality.replace(/\s+/g, ''),
-                  source: 'server',
-                  priority: 4,
-                });
-                
-                console.log(`      ✅ ADDED (SERVER)\n`);
-              } else {
-                console.log(`      ⚠️ Duplicate\n`);
-              }
-            } else {
-              console.log(`      ❌ Failed\n`);
-            }
-          }
         }
       }
     }
@@ -666,9 +478,8 @@ app.get('/episode/:slug', async (req, res) => {
     }
 
     console.log(`\n📊 RESULTS:`);
+    console.log(`   🎬 Desustream: ${uniqueLinks.filter(l => l.source === 'desustream').length}`);
     console.log(`   💧 Pixeldrain: ${uniqueLinks.filter(l => l.source === 'pixeldrain').length}`);
-    console.log(`   🐙 Krakenfiles: ${uniqueLinks.filter(l => l.source === 'krakenfiles').length}`);
-    console.log(`   🎬 Server: ${uniqueLinks.filter(l => l.source === 'server').length}`);
     console.log(`   📦 Fallback: ${uniqueLinks.filter(l => l.source === 'fallback').length}`);
     console.log(`   🎯 Total: ${uniqueLinks.length}`);
     console.log(`${'='.repeat(70)}\n`);
@@ -683,15 +494,20 @@ app.get('/episode/:slug', async (req, res) => {
       }
     });
 
-    // Main stream URL (prefer highest quality)
-    const qualities = ['4k', '4K', '1080p', '720p', '480p', '360p'];
+    // Main stream URL (prefer Desustream, then highest quality)
     let streamUrl = '';
     
-    for (const q of qualities) {
-      const link = uniqueLinks.find(l => l.quality === q);
-      if (link) {
-        streamUrl = link.url;
-        break;
+    const desustreamLink = uniqueLinks.find(l => l.source === 'desustream');
+    if (desustreamLink) {
+      streamUrl = desustreamLink.url;
+    } else {
+      const qualities = ['1080p', '720p', '480p', '360p'];
+      for (const q of qualities) {
+        const link = uniqueLinks.find(l => l.quality === q);
+        if (link) {
+          streamUrl = link.url;
+          break;
+        }
       }
     }
     
@@ -699,12 +515,12 @@ app.get('/episode/:slug', async (req, res) => {
       streamUrl = uniqueLinks[0].url;
     }
     
-    if (!streamUrl && data.defaultStreamingUrl) {
-      streamUrl = data.defaultStreamingUrl;
+    if (!streamUrl && data.stream_url) {
+      streamUrl = data.stream_url;
     }
 
     res.json({
-      status: 'Ok',
+      status: 'success',
       data: {
         ...data,
         stream_url: streamUrl,
@@ -719,36 +535,54 @@ app.get('/episode/:slug', async (req, res) => {
   }
 });
 
+// ============================================
+// 🏠 ROOT ENDPOINT
+// ============================================
+
 app.get('/', (req, res) => {
   res.json({
     status: 'Online',
-    service: '🔥 Samehadaku - Pixeldrain + Krakenfiles + Server Priority',
-    version: '9.0.0',
-    api: 'https://www.sankavollerei.com/anime/samehadaku',
+    service: '🔥 Otakudesu Streaming API',
+    version: '10.0.0',
+    api: 'https://www.sankavollerei.com/anime/otakudesu',
     features: [
-      '💧 PIXELDRAIN PRIORITY (all resolutions)',
-      '🐙 KRAKENFILES EXTRACTION (direct download)',
-      '🎬 SERVER RESOLVER (streaming URLs)',
-      '📦 Smart fallback system',
-      '✅ Multi-quality: 360p-4K',
-      '✅ MP4 + MKV formats',
-      '✅ Safelink bypass',
-      '✅ Blogger/Google Video',
+      '🎬 DESUSTREAM PRIORITY (main streaming)',
+      '💧 PIXELDRAIN SUPPORT (multi-quality)',
+      '🔓 SAFELINK BYPASS',
+      '✅ Multi-quality: 360p-1080p',
+      '✅ MP4 format',
       '🎯 Direct streaming only',
-      'tes',
+      '📱 Mobile & Desktop compatible',
     ],
+    endpoints: {
+      home: '/anime/home',
+      schedule: '/anime/schedule',
+      ongoing: '/anime/ongoing-anime?page=1',
+      completed: '/anime/complete-anime/1',
+      genres: '/anime/genre',
+      genre_anime: '/anime/genre/:slug?page=1',
+      search: '/anime/search/:keyword',
+      detail: '/anime/anime/:slug',
+      episode: '/anime/episode/:slug',
+      batch: '/anime/batch/:slug',
+      server: '/anime/server/:serverId',
+      unlimited: '/anime/unlimited',
+    },
   });
 });
 
+// ============================================
+// 🚀 START SERVER
+// ============================================
+
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(70)}`);
-  console.log(`🚀 SAMEHADAKU STREAMING - v9.0.0`);
+  console.log(`🚀 OTAKUDESU STREAMING API - v10.0.0`);
   console.log(`${'='.repeat(70)}`);
   console.log(`📡 Port: ${PORT}`);
-  console.log(`💧 PIXELDRAIN PRIORITY`);
-  console.log(`🐙 KRAKENFILES EXTRACTION`);
-  console.log(`🎬 SERVER RESOLVER`);
-  console.log(`📦 Smart fallback system`);
+  console.log(`🎬 DESUSTREAM PRIORITY`);
+  console.log(`💧 PIXELDRAIN SUPPORT`);
+  console.log(`🔓 SAFELINK BYPASS`);
   console.log(`💾 NO STORAGE - Direct streaming`);
   console.log(`${'='.repeat(70)}\n`);
 });
