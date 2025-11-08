@@ -1,4 +1,4 @@
-// server.js - OTAKUDESU API v15.0 - FOLLOW REDIRECTS + EXTRACT
+// server.js - OTAKUDESU API v16.0 - PARSE SAFELINK
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -31,158 +31,79 @@ const axiosInstance = axios.create({
 });
 
 // ============================================
-// 🔥 FOLLOW REDIRECTS TO GET REAL URL
+// 🔗 PARSE SAFELINK TO REAL URL
 // ============================================
 
-async function followRedirects(url, maxDepth = 5) {
+async function parseSafelink(safelinkUrl) {
   try {
-    console.log(`\n🔗 Following redirects: ${url}`);
+    console.log(`\n🔗 Parsing safelink: ${safelinkUrl}`);
     
-    let currentUrl = url;
-    let depth = 0;
+    // Fetch safelink page
+    const response = await axios.get(safelinkUrl, {
+      httpsAgent,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://otakudesu.cloud/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml',
+      },
+      timeout: 15000,
+    });
     
-    while (depth < maxDepth) {
-      console.log(`   [${depth + 1}] Checking: ${currentUrl}`);
-      
-      // Try HEAD request first (faster)
-      try {
-        const headResponse = await axios.head(currentUrl, {
-          httpsAgent,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://otakudesu.cloud/',
-          },
-          maxRedirects: 0,
-          validateStatus: (status) => status < 400,
-          timeout: 10000,
-        });
-        
-        // Check content type
-        const contentType = headResponse.headers['content-type'] || '';
-        
-        if (contentType.includes('video') || currentUrl.includes('.m3u8') || currentUrl.includes('.mp4')) {
-          console.log(`   ✅ Found video: ${currentUrl}`);
-          return {
-            url: currentUrl,
-            type: currentUrl.includes('.m3u8') ? 'hls' : 'mp4',
-          };
-        }
-        
-      } catch (headError) {
-        // If HEAD fails, try GET
-        console.log(`   ⚠️ HEAD failed, trying GET...`);
-      }
-      
-      // GET request to follow redirect or parse HTML
-      const response = await axios.get(currentUrl, {
-        httpsAgent,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': 'https://otakudesu.cloud/',
-          'Accept': 'text/html,application/xhtml+xml,application/xml',
-        },
-        maxRedirects: 0,
-        validateStatus: (status) => status < 400,
-        timeout: 15000,
-      });
-      
-      const contentType = response.headers['content-type'] || '';
-      
-      // Check if it's a video
-      if (contentType.includes('video') || currentUrl.includes('.m3u8') || currentUrl.includes('.mp4')) {
-        console.log(`   ✅ Found video: ${currentUrl}`);
-        return {
-          url: currentUrl,
-          type: currentUrl.includes('.m3u8') ? 'hls' : 'mp4',
-        };
-      }
-      
-      // Parse HTML to find video or next redirect
-      const $ = cheerio.load(response.data);
-      
-      // Method 1: Find <video> tag
-      const videoSrc = $('video source').attr('src') || $('video').attr('src');
-      if (videoSrc && videoSrc.startsWith('http')) {
-        console.log(`   ✅ Found video tag: ${videoSrc}`);
-        return {
-          url: videoSrc,
-          type: videoSrc.includes('.m3u8') ? 'hls' : 'mp4',
-        };
-      }
-      
-      // Method 2: Find in <script> tags
-      const scripts = $('script').map((i, el) => $(el).html()).get();
-      
-      for (const script of scripts) {
-        if (!script) continue;
-        
-        // Look for .m3u8
-        const m3u8Match = script.match(/['"]([^'"]*\.m3u8[^'"]*)['"]/);
-        if (m3u8Match && m3u8Match[1].startsWith('http')) {
-          console.log(`   ✅ Found HLS: ${m3u8Match[1]}`);
-          return { url: m3u8Match[1], type: 'hls' };
-        }
-        
-        // Look for .mp4
-        const mp4Match = script.match(/['"]([^'"]*\.mp4[^'"]*)['"]/);
-        if (mp4Match && mp4Match[1].startsWith('http')) {
-          console.log(`   ✅ Found MP4: ${mp4Match[1]}`);
-          return { url: mp4Match[1], type: 'mp4' };
-        }
-        
-        // Look for source: "url"
-        const sourceMatch = script.match(/source:\s*['"]([^'"]+)['"]/);
-        if (sourceMatch && sourceMatch[1].startsWith('http')) {
-          console.log(`   ✅ Found source: ${sourceMatch[1]}`);
-          return { 
-            url: sourceMatch[1], 
-            type: sourceMatch[1].includes('.m3u8') ? 'hls' : 'mp4' 
-          };
-        }
-        
-        // Look for file: "url"
-        const fileMatch = script.match(/file:\s*['"]([^'"]+)['"]/);
-        if (fileMatch && fileMatch[1].startsWith('http')) {
-          console.log(`   ✅ Found file: ${fileMatch[1]}`);
-          return { 
-            url: fileMatch[1], 
-            type: fileMatch[1].includes('.m3u8') ? 'hls' : 'mp4' 
-          };
-        }
-      }
-      
-      // Method 3: Find redirect link
-      const metaRefresh = $('meta[http-equiv="refresh"]').attr('content');
-      if (metaRefresh) {
-        const urlMatch = metaRefresh.match(/url=(.+)/i);
-        if (urlMatch) {
-          currentUrl = urlMatch[1];
-          depth++;
-          continue;
-        }
-      }
-      
-      // Method 4: Find any link that might be next
-      const possibleLinks = $('a[href*="desustream"], a[href*=".m3u8"], a[href*=".mp4"]');
-      if (possibleLinks.length > 0) {
-        const href = possibleLinks.first().attr('href');
-        if (href && href.startsWith('http')) {
-          currentUrl = href;
-          depth++;
-          continue;
-        }
-      }
-      
-      // No more redirects found
-      console.log(`   ⚠️ No video found, stopping`);
-      break;
+    const html = response.data;
+    const $ = cheerio.load(html);
+    
+    // Method 1: Find direct link in <a> tag
+    const directLink = $('a[href*="pixeldrain"], a[href*="drive.google"], a.btn, a.button, #link, .link').attr('href');
+    if (directLink && directLink.startsWith('http')) {
+      console.log(`   ✅ Found direct link: ${directLink}`);
+      return directLink;
     }
     
-    console.log(`   ❌ Max depth reached or no video found`);
+    // Method 2: Find in meta refresh
+    const metaRefresh = $('meta[http-equiv="refresh"]').attr('content');
+    if (metaRefresh) {
+      const urlMatch = metaRefresh.match(/url=(.+)/i);
+      if (urlMatch && urlMatch[1].startsWith('http')) {
+        console.log(`   ✅ Found in meta refresh: ${urlMatch[1]}`);
+        return urlMatch[1];
+      }
+    }
+    
+    // Method 3: Find in JavaScript redirect
+    const scripts = $('script').map((i, el) => $(el).html()).get();
+    for (const script of scripts) {
+      if (!script) continue;
+      
+      // Look for window.location or location.href
+      const locationMatch = script.match(/(?:window\.location|location\.href)\s*=\s*['"]([^'"]+)['"]/);
+      if (locationMatch && locationMatch[1].startsWith('http')) {
+        console.log(`   ✅ Found in JS redirect: ${locationMatch[1]}`);
+        return locationMatch[1];
+      }
+      
+      // Look for any URL in the script
+      const urlMatch = script.match(/['"]([^'"]*(?:pixeldrain|drive\.google|googlevideo)[^'"]*)['"]/);
+      if (urlMatch && urlMatch[1].startsWith('http')) {
+        console.log(`   ✅ Found URL in script: ${urlMatch[1]}`);
+        return urlMatch[1];
+      }
+    }
+    
+    // Method 4: Find any link that looks like a file URL
+    const allLinks = $('a[href]').map((i, el) => $(el).attr('href')).get();
+    for (const link of allLinks) {
+      if (link && link.startsWith('http') && 
+          (link.includes('pixeldrain') || link.includes('drive.google') || link.includes('googlevideo'))) {
+        console.log(`   ✅ Found file link: ${link}`);
+        return link;
+      }
+    }
+    
+    console.log('   ⚠️ No direct URL found in safelink');
     return null;
     
   } catch (error) {
-    console.error(`   ❌ Redirect error: ${error.message}`);
+    console.error(`   ❌ Safelink parse error: ${error.message}`);
     return null;
   }
 }
@@ -192,6 +113,7 @@ async function followRedirects(url, maxDepth = 5) {
 // ============================================
 
 function processPixeldrainUrl(url) {
+  // Convert web URL to API URL
   const match = url.match(/pixeldrain\.com\/u\/([a-zA-Z0-9_-]+)/);
   if (match) {
     return `https://pixeldrain.com/api/file/${match[1]}`;
@@ -230,31 +152,51 @@ app.get('/anime/episode/:slug', async (req, res) => {
 
     console.log('\n📦 PROCESSING LINKS\n');
 
-    // ✅ PRIORITY 1: Process stream_url (follow redirects)
+    // ✅ PRIORITY 1: Process stream_url (check if safelink)
     if (data.stream_url) {
       const streamUrl = data.stream_url;
       
       console.log('🎬 Processing stream URL...');
       
-      // Follow redirects to get real video URL
-      const extracted = await followRedirects(streamUrl);
-      
-      if (extracted) {
+      // Check if it's a safelink
+      if (streamUrl.includes('safelink')) {
+        console.log('🔗 Detected safelink, parsing...');
+        
+        const realUrl = await parseSafelink(streamUrl);
+        
+        if (realUrl) {
+          // Convert Pixeldrain URL if needed
+          const finalUrl = realUrl.includes('pixeldrain') 
+            ? processPixeldrainUrl(realUrl) 
+            : realUrl;
+          
+          processedLinks.push({
+            provider: 'Desustream',
+            url: finalUrl,
+            type: finalUrl.includes('.m3u8') ? 'hls' : 'mp4',
+            quality: 'auto',
+            source: finalUrl.includes('pixeldrain') ? 'pixeldrain' : 'stream',
+            priority: 0,
+          });
+          console.log(`✅ Safelink resolved to: ${finalUrl}`);
+        } else {
+          console.log('⚠️ Safelink parsing failed');
+        }
+      } else {
+        // Direct stream URL
         processedLinks.push({
-          provider: 'Desustream',
-          url: extracted.url,
-          type: extracted.type,
+          provider: 'Stream',
+          url: streamUrl,
+          type: streamUrl.includes('.m3u8') ? 'hls' : 'mp4',
           quality: 'auto',
-          source: 'desustream',
+          source: 'stream',
           priority: 0,
         });
-        console.log(`✅ Desustream ${extracted.type.toUpperCase()} ready`);
-      } else {
-        console.log('⚠️ Stream URL extraction failed');
+        console.log(`✅ Direct stream URL: ${streamUrl}`);
       }
     }
 
-    // ✅ PRIORITY 2: Process download URLs (Pixeldrain)
+    // ✅ PRIORITY 2: Process download URLs
     if (data.download_urls && data.download_urls.mp4) {
       const mp4Downloads = data.download_urls.mp4;
       
@@ -316,7 +258,7 @@ app.get('/anime/episode/:slug', async (req, res) => {
     });
 
     console.log(`\n📊 RESULTS:`);
-    console.log(`   🎬 Desustream: ${uniqueLinks.filter(l => l.source === 'desustream').length}`);
+    console.log(`   🎬 Stream: ${uniqueLinks.filter(l => l.source === 'stream').length}`);
     console.log(`   💧 Pixeldrain: ${uniqueLinks.filter(l => l.source === 'pixeldrain').length}`);
     console.log(`   📦 Others: ${uniqueLinks.filter(l => l.source === 'download').length}`);
     console.log(`   🎯 Total: ${uniqueLinks.length}`);
@@ -347,7 +289,7 @@ app.get('/anime/episode/:slug', async (req, res) => {
 });
 
 // ============================================
-// 📡 OTHER ENDPOINTS (unchanged)
+// 📡 OTHER ENDPOINTS
 // ============================================
 
 app.get('/anime/home', async (req, res) => {
@@ -389,20 +331,72 @@ app.get('/anime/ongoing-anime', async (req, res) => {
   }
 });
 
+app.get('/anime/schedule', async (req, res) => {
+  try {
+    const response = await axiosInstance.get(`${BASE_API}/schedule`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+app.get('/anime/complete-anime/:page', async (req, res) => {
+  try {
+    const { page } = req.params;
+    const response = await axiosInstance.get(`${BASE_API}/complete/${page}`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+app.get('/anime/genre', async (req, res) => {
+  try {
+    const response = await axiosInstance.get(`${BASE_API}/genre`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+app.get('/anime/genre/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const page = req.query.page || '1';
+    const response = await axiosInstance.get(`${BASE_API}/genre/${slug}?page=${page}`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+app.get('/anime/batch/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const response = await axiosInstance.get(`${BASE_API}/batch/${slug}`);
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
 app.get('/', (req, res) => {
   res.json({
     status: 'Online',
-    version: '15.0.0 - FOLLOW REDIRECTS',
+    version: '16.0.0 - SAFELINK PARSER',
     features: [
-      '🔗 Follow safelink/redirects to real video URL',
-      '🎬 Extract video from HTML/JS',
-      '💧 Pixeldrain direct URLs',
+      '🔗 Parse Desustream safelink to real URL',
+      '💧 Auto-convert Pixeldrain URLs',
       '✅ Ready for VideoPlayer',
     ],
+    example: {
+      input: 'https://desustream.com/safelink/link/?id=xxx',
+      output: 'https://pixeldrain.com/api/file/abc123'
+    }
   });
 });
 
 app.listen(PORT, () => {
   console.log(`\n🚀 Server running on port ${PORT}`);
-  console.log(`🔗 Strategy: Follow redirects + extract video URLs\n`);
+  console.log(`🔗 Strategy: Parse safelink → Extract real URL\n`);
 });
