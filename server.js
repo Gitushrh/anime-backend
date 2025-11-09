@@ -1,4 +1,4 @@
-// server.js - OPTIMIZED v15.0 - FAST EXTRACTION
+// server.js - FIXED ROUTES FOR FLUTTER APP
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -20,13 +20,13 @@ const httpsAgent = new https.Agent({
 });
 
 const axiosInstance = axios.create({
-  timeout: 15000, // ✅ Reduced from 30s
+  timeout: 15000,
   httpsAgent,
   headers: {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Accept': 'application/json',
   },
-  maxRedirects: 5, // ✅ Reduced from 10
+  maxRedirects: 5,
   validateStatus: (status) => status < 500,
 });
 
@@ -44,14 +44,13 @@ async function extractDesustreamVideo(iframeUrl) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': 'https://otakudesu.cloud/',
       },
-      timeout: 8000, // ✅ 8s timeout
+      timeout: 8000,
       maxRedirects: 3,
     });
     
     const html = response.data;
     const $ = cheerio.load(html);
     
-    // Find video tag
     const videoSrc = $('video source').attr('src') || $('video').attr('src');
     if (videoSrc) {
       console.log(`      ✅ Video found`);
@@ -61,20 +60,17 @@ async function extractDesustreamVideo(iframeUrl) {
       };
     }
     
-    // Find in scripts
     const scripts = $('script').map((i, el) => $(el).html()).get();
     
     for (const script of scripts) {
       if (!script) continue;
       
-      // HLS
       const m3u8Match = script.match(/['"]([^'"]*\.m3u8[^'"]*)['"]/);
       if (m3u8Match) {
         console.log(`      ✅ HLS found`);
         return { type: 'hls', url: m3u8Match[1] };
       }
       
-      // MP4
       const mp4Match = script.match(/['"]([^'"]*\.mp4[^'"]*)['"]/);
       if (mp4Match) {
         console.log(`      ✅ MP4 found`);
@@ -96,11 +92,11 @@ async function extractDesustreamVideo(iframeUrl) {
 // ============================================
 
 async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
-  if (depth > 3) return null; // ✅ Max 3 levels
+  if (depth > 3) return null;
   
   try {
     const response = await axiosInstance.get(safelinkUrl, {
-      timeout: 5000, // ✅ 5s timeout per request
+      timeout: 5000,
       maxRedirects: 5,
       validateStatus: () => true,
     });
@@ -108,29 +104,24 @@ async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
     const finalUrl = response.request?.res?.responseUrl || safelinkUrl;
     const html = response.data;
     
-    // Check redirect
     if (finalUrl.includes('pixeldrain.com')) {
       console.log(`      ✅ Pixeldrain redirect`);
       return convertToPixeldrainAPI(finalUrl);
     }
     
-    // Parse HTML (quick)
     const $ = cheerio.load(html);
     
-    // Find Pixeldrain link
     const pdLink = $('a[href*="pixeldrain.com"]').first().attr('href');
     if (pdLink) {
       console.log(`      ✅ Pixeldrain found`);
       return convertToPixeldrainAPI(pdLink);
     }
     
-    // Check nested safelink (recursive)
     const nestedSafelink = $('a[href*="safelink"]').first().attr('href');
     if (nestedSafelink && nestedSafelink !== safelinkUrl) {
       return await extractPixeldrainFromSafelink(nestedSafelink, depth + 1);
     }
     
-    // Search in JS (quick regex)
     const pdMatch = html.match(/https?:\/\/pixeldrain\.com\/[^\s"'<>]*/i);
     if (pdMatch) {
       console.log(`      ✅ Pixeldrain in JS`);
@@ -163,7 +154,7 @@ async function extractBloggerVideo(bloggerUrl) {
     console.log('      🎬 Blogger...');
     
     const response = await axiosInstance.get(bloggerUrl, {
-      timeout: 5000, // ✅ 5s timeout
+      timeout: 5000,
       headers: {
         'Referer': 'https://www.blogger.com/',
         'Origin': 'https://www.blogger.com',
@@ -191,9 +182,10 @@ async function extractBloggerVideo(bloggerUrl) {
 }
 
 // ============================================
-// 🎯 MAIN EPISODE ENDPOINT - OPTIMIZED
+// 🎯 EPISODE ENDPOINT - SESUAI FLUTTER
 // ============================================
 
+// Route: /anime/episode/:slug
 app.get('/anime/episode/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
@@ -215,7 +207,6 @@ app.get('/anime/episode/:slug', async (req, res) => {
 
     console.log('\n🔥 FAST EXTRACTION...\n');
 
-    // ✅ PARALLEL EXTRACTION (faster)
     const extractionPromises = [];
     
     // Desustream
@@ -239,7 +230,7 @@ app.get('/anime/episode/:slug', async (req, res) => {
       );
     }
 
-    // Process download URLs (limit to 2 per resolution for speed)
+    // Process download URLs
     if (data.download_urls) {
       const allResolutions = [
         ...(data.download_urls.mp4 || []),
@@ -253,14 +244,12 @@ app.get('/anime/episode/:slug', async (req, res) => {
         console.log(`🎯 ${resolution}...`);
         
         if (resGroup.urls && Array.isArray(resGroup.urls)) {
-          // ✅ LIMIT: Only process first 2 URLs per resolution
           const limitedUrls = resGroup.urls.slice(0, 2);
           
           for (const urlData of limitedUrls) {
             const provider = urlData.provider;
             const rawUrl = urlData.url;
             
-            // Direct Pixeldrain
             if (rawUrl.includes('pixeldrain.com')) {
               console.log(`   💧 ${provider}`);
               const finalUrl = convertToPixeldrainAPI(rawUrl);
@@ -275,7 +264,6 @@ app.get('/anime/episode/:slug', async (req, res) => {
               console.log(`      ✅ Added\n`);
             }
             
-            // Safelink (async extraction)
             else if (rawUrl.includes('safelink')) {
               console.log(`   🔓 ${provider}`);
               extractionPromises.push(
@@ -296,7 +284,6 @@ app.get('/anime/episode/:slug', async (req, res) => {
               );
             }
             
-            // Blogger
             else if (rawUrl.includes('blogger.com') || rawUrl.includes('blogspot.com')) {
               console.log(`   🎬 ${provider}`);
               extractionPromises.push(
@@ -321,7 +308,6 @@ app.get('/anime/episode/:slug', async (req, res) => {
       }
     }
 
-    // ✅ Wait for all extractions (with timeout)
     await Promise.allSettled(extractionPromises);
 
     // Remove duplicates
@@ -335,7 +321,6 @@ app.get('/anime/episode/:slug', async (req, res) => {
       }
     }
 
-    // Sort by priority
     uniqueLinks.sort((a, b) => a.priority - b.priority);
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
@@ -400,9 +385,10 @@ app.get('/anime/episode/:slug', async (req, res) => {
 });
 
 // ============================================
-// 📡 PASSTHROUGH ENDPOINTS
+// 📡 ROUTES SESUAI FLUTTER APP
 // ============================================
 
+// ✅ Route: /anime/home
 app.get('/anime/home', async (req, res) => {
   try {
     const response = await axiosInstance.get(`${BASE_API}/home`);
@@ -412,6 +398,7 @@ app.get('/anime/home', async (req, res) => {
   }
 });
 
+// ✅ Route: /anime/schedule
 app.get('/anime/schedule', async (req, res) => {
   try {
     const response = await axiosInstance.get(`${BASE_API}/schedule`);
@@ -421,6 +408,7 @@ app.get('/anime/schedule', async (req, res) => {
   }
 });
 
+// ✅ Route: /anime/ongoing-anime?page=1
 app.get('/anime/ongoing-anime', async (req, res) => {
   try {
     const page = req.query.page || '1';
@@ -431,6 +419,7 @@ app.get('/anime/ongoing-anime', async (req, res) => {
   }
 });
 
+// ✅ Route: /anime/complete-anime/:page
 app.get('/anime/complete-anime/:page', async (req, res) => {
   try {
     const { page } = req.params;
@@ -441,6 +430,7 @@ app.get('/anime/complete-anime/:page', async (req, res) => {
   }
 });
 
+// ✅ Route: /anime/genre
 app.get('/anime/genre', async (req, res) => {
   try {
     const response = await axiosInstance.get(`${BASE_API}/genre`);
@@ -450,6 +440,7 @@ app.get('/anime/genre', async (req, res) => {
   }
 });
 
+// ✅ Route: /anime/genre/:slug?page=1
 app.get('/anime/genre/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
@@ -461,6 +452,7 @@ app.get('/anime/genre/:slug', async (req, res) => {
   }
 });
 
+// ✅ Route: /anime/search/:keyword
 app.get('/anime/search/:keyword', async (req, res) => {
   try {
     const { keyword } = req.params;
@@ -471,6 +463,7 @@ app.get('/anime/search/:keyword', async (req, res) => {
   }
 });
 
+// ✅ Route: /anime/anime/:slug (detail anime)
 app.get('/anime/anime/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
@@ -481,6 +474,7 @@ app.get('/anime/anime/:slug', async (req, res) => {
   }
 });
 
+// ✅ Route: /anime/batch/:slug
 app.get('/anime/batch/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
@@ -499,21 +493,9 @@ app.get('/', (req, res) => {
   res.json({
     status: 'Online',
     service: '🔥 Otakudesu Fast Streaming API',
-    version: '15.0.0 - OPTIMIZED EXTRACTOR',
-    api: 'https://api.otakudesu.natee.my.id/api',
-    strategy: 'Parallel Fast Extraction (Desustream + Pixeldrain + Blogger)',
-    optimizations: [
-      '⚡ Parallel extraction',
-      '⏱️ Reduced timeouts (5-8s)',
-      '🎯 Limited to 2 sources per quality',
-      '✅ Promise.allSettled for reliability',
-    ],
-    features: [
-      '🎬 DESUSTREAM - 8s timeout',
-      '💧 PIXELDRAIN - 5s timeout per safelink',
-      '🎬 BLOGGER - 5s timeout',
-      '✅ Fast response (<10s total)',
-    ],
+    version: '15.0.0 - FLUTTER COMPATIBLE',
+    deployed_url: 'https://anime-backend-xi.vercel.app/',
+    upstream_api: 'https://otakudesu-be-eight.vercel.app/api',
     endpoints: {
       home: '/anime/home',
       schedule: '/anime/schedule',
@@ -522,10 +504,17 @@ app.get('/', (req, res) => {
       genres: '/anime/genre',
       genre_anime: '/anime/genre/:slug?page=1',
       search: '/anime/search/:keyword',
-      detail: '/anime/anime/:slug',
+      anime_detail: '/anime/anime/:slug',
       episode: '/anime/episode/:slug',
       batch: '/anime/batch/:slug',
     },
+    features: [
+      '🎬 DESUSTREAM extraction (8s timeout)',
+      '💧 PIXELDRAIN safelink resolver (5s timeout)',
+      '🎬 BLOGGER video extraction (5s timeout)',
+      '✅ Fast parallel extraction',
+      '⚡ Flutter app compatible routes',
+    ],
   });
 });
 
@@ -535,11 +524,11 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(70)}`);
-  console.log(`🚀 OTAKUDESU API - v15.0 OPTIMIZED`);
+  console.log(`🚀 OTAKUDESU API - FLUTTER COMPATIBLE`);
   console.log(`${'='.repeat(70)}`);
   console.log(`📡 Port: ${PORT}`);
-  console.log(`⚡ Parallel extraction`);
-  console.log(`⏱️ Fast timeouts (5-8s)`);
-  console.log(`🎯 Target: <10s response`);
+  console.log(`🔗 Deploy: https://anime-backend-xi.vercel.app/`);
+  console.log(`📥 Upstream: https://otakudesu-be-eight.vercel.app/api`);
+  console.log(`✅ Routes: /anime/*`);
   console.log(`${'='.repeat(70)}\n`);
 });
