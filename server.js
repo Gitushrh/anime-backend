@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-const BASE_API = 'https://otakudesu-be-six.vercel.app';
+const BASE_API = 'https://otakudesu-be-six.vercel.app/';
 
 const httpsAgent = new https.Agent({
   rejectUnauthorized: false,
