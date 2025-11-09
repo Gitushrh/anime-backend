@@ -7,6 +7,7 @@ const cheerio = require('cheerio');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const kDebugMode = process.env.NODE_ENV !== 'production'; // ✅ Add debug flag
 
 app.use(cors({ origin: '*' }));
 app.use(express.json());
@@ -388,23 +389,34 @@ app.get('/anime/episode/:slug', async (req, res) => {
 // 📡 ROUTES SESUAI FLUTTER APP
 // ============================================
 
-// ✅ Route: /anime/home
+// ✅ Route: /anime/home (IMPROVED: Better error handling)
 app.get('/anime/home', async (req, res) => {
   try {
     const response = await axiosInstance.get(`${BASE_API}/home`);
     res.json(response.data);
   } catch (error) {
-    res.status(500).json({ status: 'Error', message: error.message });
+    if (kDebugMode) console.log('❌ Home error:', error.message);
+    res.status(200).json({
+      status: 'error',
+      data: { ongoing_anime: [], complete_anime: [] },
+      message: error.message
+    });
   }
 });
 
-// ✅ Route: /anime/schedule
+// ✅ Route: /anime/schedule (FIXED: Return empty schedule if upstream unavailable)
 app.get('/anime/schedule', async (req, res) => {
   try {
     const response = await axiosInstance.get(`${BASE_API}/schedule`);
     res.json(response.data);
   } catch (error) {
-    res.status(500).json({ status: 'Error', message: error.message });
+    // ✅ Return empty schedule instead of error
+    console.log('⚠️ Schedule endpoint unavailable, returning empty data');
+    res.json({
+      status: 'success',
+      data: [],
+      message: 'Schedule not available from upstream API'
+    });
   }
 });
 
@@ -463,14 +475,34 @@ app.get('/anime/search/:keyword', async (req, res) => {
   }
 });
 
-// ✅ Route: /anime/anime/:slug (detail anime)
+// ✅ Route: /anime/anime/:slug (detail anime) - FIXED: Better error handling
 app.get('/anime/anime/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
+    
+    if (kDebugMode) console.log(`📺 Fetching anime detail: ${slug}`);
+    
     const response = await axiosInstance.get(`${BASE_API}/anime/${slug}`);
-    res.json(response.data);
+    
+    if (response && response.data) {
+      res.json(response.data);
+    } else {
+      // Return minimal data if upstream fails
+      res.json({
+        status: 'error',
+        data: null,
+        message: 'Anime not found'
+      });
+    }
   } catch (error) {
-    res.status(500).json({ status: 'Error', message: error.message });
+    if (kDebugMode) console.log(`❌ Error fetching ${req.params.slug}: ${error.message}`);
+    
+    // ✅ Return 200 with error status instead of 500
+    res.status(200).json({
+      status: 'error',
+      data: null,
+      message: error.message || 'Failed to fetch anime detail'
+    });
   }
 });
 
