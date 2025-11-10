@@ -145,11 +145,30 @@ async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
 }
 
 function convertToPixeldrainAPI(url) {
-  const apiMatch = url.match(/pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]+)/);
-  if (apiMatch) return `https://pixeldrain.com/api/file/${apiMatch[1]}`;
+  if (!url || typeof url !== 'string') return url;
   
-  const webMatch = url.match(/pixeldrain\.com\/u\/([a-zA-Z0-9_-]+)/);
-  if (webMatch) return `https://pixeldrain.com/api/file/${webMatch[1]}`;
+  // Already in API format
+  const apiMatch = url.match(/pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]+)/i);
+  if (apiMatch) {
+    return `https://pixeldrain.com/api/file/${apiMatch[1]}`;
+  }
+  
+  // Web format: pixeldrain.com/u/FILE_ID
+  const webMatch = url.match(/pixeldrain\.com\/u\/([a-zA-Z0-9_-]+)/i);
+  if (webMatch) {
+    return `https://pixeldrain.com/api/file/${webMatch[1]}`;
+  }
+  
+  // Direct file ID (if URL is just the ID)
+  const idMatch = url.match(/^([a-zA-Z0-9_-]{8,})$/);
+  if (idMatch) {
+    return `https://pixeldrain.com/api/file/${idMatch[1]}`;
+  }
+  
+  // Return as-is if it's already a valid URL
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
   
   return url;
 }
@@ -212,117 +231,298 @@ app.get('/anime/episode/:slug', async (req, res) => {
 
     const data = episodeData.data;
     const processedLinks = [];
+    let streamList = {};
 
     console.log('\n🔥 FAST EXTRACTION...\n');
 
-    // ✅ PARALLEL EXTRACTION (faster)
-    const extractionPromises = [];
-    
-    // Desustream
-    if (data.stream_url && data.stream_url.includes('desustream.info')) {
-      console.log('🎬 Desustream...');
-      extractionPromises.push(
-        extractDesustreamVideo(data.stream_url)
-          .then(result => {
-            if (result) {
-              processedLinks.push({
-                provider: 'Desustream',
-                url: result.url,
-                type: result.type,
-                quality: 'auto',
-                source: 'desustream',
-                priority: 0,
-              });
-              console.log('   ✅ Desustream added\n');
+    // Helper to validate pixeldrain URL
+    const isValidPixeldrainUrl = (url) => {
+      if (!url || typeof url !== 'string') return false;
+      // Check if URL has a valid file ID (not just domain)
+      const hasFileId = /pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})/i.test(url) ||
+                       /pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})/i.test(url);
+      // Reject if it's just the domain
+      const isJustDomain = /^https?:\/\/pixeldrain\.com\/?$/i.test(url);
+      return hasFileId && !isJustDomain;
+    };
+
+    // ✅ PRIORITY 1: Use stream_list from API if available (FASTEST & MOST RELIABLE)
+    if (data.stream_list && typeof data.stream_list === 'object') {
+      console.log('✅ Found stream_list from API - Validating URLs...\n');
+      
+      const apiStreamList = data.stream_list;
+      const qualityOrder = ['1080p', '720p', '480p', '360p'];
+      let validCount = 0;
+      
+      // Helper to determine file type from resolved_links if available
+      const getTypeFromResolvedLinks = (quality, url) => {
+        if (data.resolved_links && Array.isArray(data.resolved_links)) {
+          // Extract file ID from URL for matching
+          const fileId = url.match(/pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]+)/i)?.[1];
+          
+          if (fileId) {
+            // Find matching link by quality and file ID
+            const match = data.resolved_links.find(link => {
+              if (link.quality !== quality) return false;
+              const linkFileId = link.url?.match(/pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]+)/i)?.[1];
+              return linkFileId === fileId;
+            });
+            
+            if (match && match.type) {
+              return match.type;
             }
-          })
-      );
+          }
+        }
+        // Default: prefer mp4 for streaming
+        return 'mp4';
+      };
+      
+      for (const quality of qualityOrder) {
+        if (apiStreamList[quality]) {
+          let url = apiStreamList[quality];
+          
+          // Validate URL first
+          if (!isValidPixeldrainUrl(url)) {
+            console.log(`   ⚠️ ${quality}: Invalid URL (${url.substring(0, 40)}...) - Skipping`);
+            continue;
+          }
+          
+          // Ensure URL is in proper pixeldrain API format
+          url = convertToPixeldrainAPI(url);
+          
+          // Double-check after conversion
+          if (!isValidPixeldrainUrl(url)) {
+            console.log(`   ⚠️ ${quality}: Invalid after conversion - Skipping`);
+            continue;
+          }
+          
+          // Determine file type
+          let fileType = getTypeFromResolvedLinks(quality, url);
+          
+          // If not found in resolved_links, check download_urls structure
+          if (fileType === 'mp4' && data.download_urls) {
+            // Check if this quality exists in mkv format
+            const mkvRes = (data.download_urls.mkv || []).find(r => r.resolution === quality);
+            if (mkvRes && mkvRes.urls) {
+              // Check if any mkv URL matches this pixeldrain file ID
+              const fileId = url.match(/pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]+)/)?.[1];
+              if (fileId) {
+                const hasMkv = mkvRes.urls.some(u => 
+                  u.url && (u.url.includes(fileId) || u.url.includes('pixeldrain'))
+                );
+                if (hasMkv) fileType = 'mkv';
+              }
+            }
+          }
+          
+          // Add to stream_list
+          streamList[quality] = url;
+          validCount++;
+          
+          // Add to processedLinks for resolved_links
+          processedLinks.push({
+            provider: `Pdrain (${quality})`,
+            url: url,
+            type: fileType,
+            quality: quality,
+            source: 'pixeldrain',
+            priority: 0, // Highest priority
+          });
+          
+          console.log(`   ✅ ${quality} (${fileType}): ${url.substring(0, 50)}...`);
+        }
+      }
+      
+      if (validCount > 0) {
+        console.log(`\n📊 stream_list: ${validCount} valid qualities ready\n`);
+      } else {
+        console.log(`\n⚠️ stream_list: No valid URLs found - Will extract from safelinks\n`);
+        streamList = {}; // Reset to trigger safelink extraction
+      }
     }
 
-    // Process download URLs (limit to 2 per resolution for speed)
-    if (data.download_urls) {
-      const allResolutions = [
-        ...(data.download_urls.mp4 || []),
-        ...(data.download_urls.mkv || []).map(mkv => ({ ...mkv, format: 'mkv' })),
-      ];
+    // ✅ PRIORITY 2: Extract from safelinks (fallback if stream_list not available or incomplete)
+    // Check if we need more qualities (target: at least 720p and 480p)
+    const targetQualities = ['720p', '480p', '1080p', '360p'];
+    const hasTargetQualities = targetQualities.slice(0, 2).every(q => streamList[q]);
+    const needsExtraction = Object.keys(streamList).length === 0 || !hasTargetQualities;
+    
+    if (needsExtraction) {
+      if (Object.keys(streamList).length === 0) {
+        console.log('⚠️ No valid stream_list - Extracting from safelinks...\n');
+      } else {
+        const missing = targetQualities.slice(0, 2).filter(q => !streamList[q]);
+        console.log(`⚠️ stream_list incomplete (missing: ${missing.join(', ')}) - Extracting from safelinks...\n`);
+      }
       
-      for (const resGroup of allResolutions) {
-        const resolution = resGroup.resolution;
-        const format = resGroup.format || 'mp4';
+      const extractionPromises = [];
+      
+      // Desustream
+      if (data.stream_url && data.stream_url.includes('desustream.info')) {
+        console.log('🎬 Desustream...');
+        extractionPromises.push(
+          extractDesustreamVideo(data.stream_url)
+            .then(result => {
+              if (result) {
+                processedLinks.push({
+                  provider: 'Desustream',
+                  url: result.url,
+                  type: result.type,
+                  quality: 'auto',
+                  source: 'desustream',
+                  priority: 1,
+                });
+                console.log('   ✅ Desustream added\n');
+              }
+            })
+        );
+      }
+
+      // Process download URLs - AGGRESSIVE EXTRACTION
+      if (data.download_urls) {
+        const allResolutions = [
+          ...(data.download_urls.mp4 || []),
+          ...(data.download_urls.mkv || []).map(mkv => ({ ...mkv, format: 'mkv' })),
+        ];
         
-        console.log(`🎯 ${resolution}...`);
+        // Priority providers (more reliable)
+        const priorityProviders = ['Pdrain', 'ODFiles', 'OD Files'];
         
-        if (resGroup.urls && Array.isArray(resGroup.urls)) {
-          // ✅ LIMIT: Only process first 2 URLs per resolution
-          const limitedUrls = resGroup.urls.slice(0, 2);
+        for (const resGroup of allResolutions) {
+          const resolution = resGroup.resolution;
+          const format = resGroup.format || 'mp4';
           
-          for (const urlData of limitedUrls) {
-            const provider = urlData.provider;
-            const rawUrl = urlData.url;
+          console.log(`🎯 ${resolution} (${format})...`);
+          
+          if (resGroup.urls && Array.isArray(resGroup.urls)) {
+            // Sort URLs: priority providers first
+            const sortedUrls = [...resGroup.urls].sort((a, b) => {
+              const aPriority = priorityProviders.some(p => a.provider?.includes(p)) ? 0 : 1;
+              const bPriority = priorityProviders.some(p => b.provider?.includes(p)) ? 0 : 1;
+              return aPriority - bPriority;
+            });
             
-            // Direct Pixeldrain
-            if (rawUrl.includes('pixeldrain.com')) {
-              console.log(`   💧 ${provider}`);
-              const finalUrl = convertToPixeldrainAPI(rawUrl);
-              processedLinks.push({
-                provider: `${provider} (${resolution})`,
-                url: finalUrl,
-                type: format,
-                quality: resolution,
-                source: 'pixeldrain',
-                priority: 1,
-              });
-              console.log(`      ✅ Added\n`);
+            // ✅ INCREASED: Process up to 4 URLs per resolution (was 2)
+            const limitedUrls = sortedUrls.slice(0, 4);
+            let extractedCount = 0;
+            
+            for (const urlData of limitedUrls) {
+              const provider = urlData.provider?.trim() || 'Unknown';
+              const rawUrl = urlData.url;
+              
+              if (!rawUrl) continue;
+              
+              // Direct Pixeldrain
+              if (rawUrl.includes('pixeldrain.com')) {
+                const finalUrl = convertToPixeldrainAPI(rawUrl);
+                if (isValidPixeldrainUrl(finalUrl)) {
+                  console.log(`   💧 ${provider}`);
+                  processedLinks.push({
+                    provider: `${provider} (${resolution})`,
+                    url: finalUrl,
+                    type: format,
+                    quality: resolution,
+                    source: 'pixeldrain',
+                    priority: 1,
+                  });
+                  extractedCount++;
+                  console.log(`      ✅ Added\n`);
+                }
+              }
+              
+              // Safelink (async extraction) - AGGRESSIVE
+              else if (rawUrl.includes('safelink')) {
+                console.log(`   🔓 ${provider}`);
+                extractionPromises.push(
+                  extractPixeldrainFromSafelink(rawUrl)
+                    .then(finalUrl => {
+                      if (finalUrl && isValidPixeldrainUrl(finalUrl)) {
+                        processedLinks.push({
+                          provider: `${provider} (${resolution})`,
+                          url: finalUrl,
+                          type: format,
+                          quality: resolution,
+                          source: 'pixeldrain',
+                          priority: 1,
+                        });
+                        extractedCount++;
+                        console.log(`      ✅ Extracted\n`);
+                      } else {
+                        console.log(`      ⚠️ Invalid URL\n`);
+                      }
+                    })
+                    .catch(err => {
+                      console.log(`      ❌ Failed: ${err.message.substring(0, 30)}\n`);
+                    })
+                );
+              }
+              
+              // Blogger
+              else if (rawUrl.includes('blogger.com') || rawUrl.includes('blogspot.com')) {
+                console.log(`   🎬 ${provider}`);
+                extractionPromises.push(
+                  extractBloggerVideo(rawUrl)
+                    .then(finalUrl => {
+                      if (finalUrl) {
+                        processedLinks.push({
+                          provider: `${provider} (${resolution})`,
+                          url: finalUrl,
+                          type: format,
+                          quality: resolution,
+                          source: 'blogger',
+                          priority: 2,
+                        });
+                        extractedCount++;
+                        console.log(`      ✅ Added\n`);
+                      }
+                    })
+                    .catch(err => {
+                      console.log(`      ❌ Failed: ${err.message.substring(0, 30)}\n`);
+                    })
+                );
+              }
             }
             
-            // Safelink (async extraction)
-            else if (rawUrl.includes('safelink')) {
-              console.log(`   🔓 ${provider}`);
-              extractionPromises.push(
-                extractPixeldrainFromSafelink(rawUrl)
-                  .then(finalUrl => {
-                    if (finalUrl) {
-                      processedLinks.push({
-                        provider: `${provider} (${resolution})`,
-                        url: finalUrl,
-                        type: format,
-                        quality: resolution,
-                        source: 'pixeldrain',
-                        priority: 1,
-                      });
-                      console.log(`      ✅ Extracted\n`);
-                    }
-                  })
-              );
-            }
-            
-            // Blogger
-            else if (rawUrl.includes('blogger.com') || rawUrl.includes('blogspot.com')) {
-              console.log(`   🎬 ${provider}`);
-              extractionPromises.push(
-                extractBloggerVideo(rawUrl)
-                  .then(finalUrl => {
-                    if (finalUrl) {
-                      processedLinks.push({
-                        provider: `${provider} (${resolution})`,
-                        url: finalUrl,
-                        type: format,
-                        quality: resolution,
-                        source: 'blogger',
-                        priority: 2,
-                      });
-                      console.log(`      ✅ Added\n`);
-                    }
-                  })
-              );
+            if (extractedCount === 0 && limitedUrls.length > 0) {
+              console.log(`   ⚠️ No valid URLs extracted for ${resolution}\n`);
             }
           }
         }
       }
-    }
 
-    // ✅ Wait for all extractions (with timeout)
-    await Promise.allSettled(extractionPromises);
+      // ✅ Wait for all extractions (with timeout)
+      console.log(`\n⏳ Waiting for ${extractionPromises.length} extractions...\n`);
+      await Promise.allSettled(extractionPromises);
+
+      // Build stream_list from extracted links (one per quality, best priority)
+      // Only add qualities that don't exist in stream_list yet
+      const qualityMap = new Map();
+      processedLinks.forEach(link => {
+        if (link.quality && link.quality !== 'auto' && isValidPixeldrainUrl(link.url)) {
+          // Skip if this quality already exists in stream_list
+          if (streamList[link.quality]) {
+            return;
+          }
+          
+          if (!qualityMap.has(link.quality) || link.priority < qualityMap.get(link.quality).priority) {
+            qualityMap.set(link.quality, link);
+          }
+        }
+      });
+      
+      // Add new qualities to stream_list
+      qualityMap.forEach((link, quality) => {
+        streamList[quality] = link.url;
+      });
+      
+      const newQualities = qualityMap.size;
+      const totalQualities = Object.keys(streamList).length;
+      if (newQualities > 0) {
+        console.log(`📊 Extracted ${newQualities} new qualities from safelinks (Total: ${totalQualities})\n`);
+      } else {
+        console.log(`📊 No new qualities extracted (Total: ${totalQualities})\n`);
+      }
+    }
 
     // Remove duplicates
     const uniqueLinks = [];
@@ -335,49 +535,46 @@ app.get('/anime/episode/:slug', async (req, res) => {
       }
     }
 
-    // Sort by priority
+    // Sort by priority (stream_list links first)
     uniqueLinks.sort((a, b) => a.priority - b.priority);
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
     
     console.log(`📊 RESULTS (${elapsed}s):`);
+    console.log(`   ✅ stream_list: ${Object.keys(streamList).length} qualities`);
     console.log(`   🎬 Desustream: ${uniqueLinks.filter(l => l.source === 'desustream').length}`);
     console.log(`   💧 Pixeldrain: ${uniqueLinks.filter(l => l.source === 'pixeldrain').length}`);
     console.log(`   🎬 Blogger: ${uniqueLinks.filter(l => l.source === 'blogger').length}`);
     console.log(`   🎯 Total: ${uniqueLinks.length}`);
     console.log(`${'='.repeat(70)}\n`);
 
-    // Build stream_list
-    const streamList = {};
-    uniqueLinks.forEach(link => {
-      if (link.quality && link.quality !== 'auto') {
-        if (!streamList[link.quality]) {
-          streamList[link.quality] = link.url;
-        }
-      }
-    });
-
-    // Select default stream_url
+    // Select default stream_url (prioritize from stream_list)
     let streamUrl = '';
     
-    const desustream = uniqueLinks.find(l => l.source === 'desustream');
-    if (desustream) {
-      streamUrl = desustream.url;
-    } else {
-      const qualities = ['1080p', '720p', '480p', '360p'];
-      for (const q of qualities) {
-        const link = uniqueLinks.find(l => l.quality === q);
-        if (link) {
-          streamUrl = link.url;
-          break;
-        }
+    // Try stream_list first (720p preferred)
+    const qualityOrder = ['720p', '1080p', '480p', '360p'];
+    for (const q of qualityOrder) {
+      if (streamList[q]) {
+        streamUrl = streamList[q];
+        console.log(`✅ Default stream: ${q}`);
+        break;
       }
     }
     
+    // Fallback to desustream
+    if (!streamUrl) {
+      const desustream = uniqueLinks.find(l => l.source === 'desustream');
+      if (desustream) {
+        streamUrl = desustream.url;
+      }
+    }
+    
+    // Fallback to first available
     if (!streamUrl && uniqueLinks.length > 0) {
       streamUrl = uniqueLinks[0].url;
     }
     
+    // Last resort: use original stream_url
     if (!streamUrl && data.stream_url) {
       streamUrl = data.stream_url;
     }
