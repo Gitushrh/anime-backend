@@ -268,7 +268,7 @@ async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
       const onclick = $(onclickElements[i]).attr('onclick');
       if (onclick) {
         const pdMatch = onclick.match(/pixeldrain\.com\/(?:api\/file|u)\/([a-zA-Z0-9_-]{8,})/i);
-        if (pdMatch) {
+    if (pdMatch) {
           const fileId = pdMatch[1];
           const invalidIds = ['pixeldrain', 'api', 'file', 'u', 'www', 'com'];
           if (!invalidIds.includes(fileId.toLowerCase())) {
@@ -729,7 +729,7 @@ app.get('/anime/episode/:slug', async (req, res) => {
             
             // Direct Pixeldrain
             if (rawUrl.includes('pixeldrain.com')) {
-                const finalUrl = convertToPixeldrainAPI(rawUrl);
+              const finalUrl = convertToPixeldrainAPI(rawUrl);
                 if (isValidPixeldrainUrl(finalUrl)) {
               console.log(`   💧 ${provider}`);
               processedLinks.push({
@@ -808,7 +808,7 @@ app.get('/anime/episode/:slug', async (req, res) => {
             }
           }
             
-            if (extractedCount === 0 && limitedUrls.length > 0) {
+            if (extractedCount === 0 && allUrls.length > 0) {
               console.log(`   ⚠️ No valid URLs extracted for ${resolution}\n`);
           }
         }
@@ -904,8 +904,8 @@ app.get('/anime/episode/:slug', async (req, res) => {
     // Fallback to desustream
     if (!streamUrl) {
       const desustream = uniqueLinks.find(l => l.source === 'desustream' && l.url && l.url.startsWith('http'));
-      if (desustream) {
-        streamUrl = desustream.url;
+    if (desustream) {
+      streamUrl = desustream.url;
       }
     }
     
@@ -931,7 +931,7 @@ app.get('/anime/episode/:slug', async (req, res) => {
         }
       } else if (data.stream_url.startsWith('http://') || data.stream_url.startsWith('https://')) {
         // For non-pixeldrain URLs, just check if it's a valid HTTP URL
-        streamUrl = data.stream_url;
+      streamUrl = data.stream_url;
       }
     }
     
@@ -950,7 +950,7 @@ app.get('/anime/episode/:slug', async (req, res) => {
     }
 
     // ✅ FINAL VALIDATION: Ensure all URLs in resolved_links are valid
-    const finalResolvedLinks = uniqueLinks.filter(link => {
+    const validatedResolvedLinks = uniqueLinks.filter(link => {
       if (!link.url || typeof link.url !== 'string') return false;
       
       if (link.source === 'pixeldrain') {
@@ -984,8 +984,8 @@ app.get('/anime/episode/:slug', async (req, res) => {
     }
     
     // Merge our extracted links with cleaned API links (avoid duplicates)
-    const allValidLinks = [...finalResolvedLinks];
-    const seenUrlsFinal = new Set(finalResolvedLinks.map(l => l.url));
+    const allValidLinks = [...validatedResolvedLinks];
+    const seenUrlsFinal = new Set(validatedResolvedLinks.map(l => l.url));
     
     for (const apiLink of cleanedApiResolvedLinks) {
       if (!seenUrlsFinal.has(apiLink.url)) {
@@ -1002,12 +1002,12 @@ app.get('/anime/episode/:slug', async (req, res) => {
       }
     }
     
-    // Log final results (before final validation)
+    // Log final results
     if (allValidLinks.length === 0 && Object.keys(streamList).length === 0) {
       console.log(`\n⚠️ WARNING: No valid streaming URLs found for this episode!`);
       console.log(`   This episode may not be available for streaming.\n`);
     } else {
-      console.log(`\n✅ Before final check: ${allValidLinks.length} valid links, ${Object.keys(streamList).length} qualities in stream_list\n`);
+      console.log(`\n✅ FINAL: ${allValidLinks.length} valid links, ${Object.keys(streamList).length} qualities in stream_list\n`);
     }
     
     // ✅ CRITICAL: Final validation - double check everything
@@ -1027,28 +1027,14 @@ app.get('/anime/episode/:slug', async (req, res) => {
       }
     }
     
-    // Validate resolved_links one more time (final check)
-    const finalValidLinks = allValidLinks.filter(link => {
+    // Validate resolved_links one more time
+    const finalResponseLinks = allValidLinks.filter(link => {
       if (!link.url || typeof link.url !== 'string') return false;
       if (link.url.includes('pixeldrain.com')) {
         return isValidPixeldrainUrl(link.url);
       }
       return link.url.startsWith('http://') || link.url.startsWith('https://');
     });
-    
-    // Log final results after validation
-    if (finalValidLinks.length === 0 && Object.keys(finalStreamList).length === 0) {
-      console.log(`\n⚠️ FINAL WARNING: No valid streaming URLs after validation!`);
-      console.log(`   Response will have empty stream_list and resolved_links.\n`);
-    } else {
-      console.log(`\n✅ FINAL RESULT: ${finalValidLinks.length} valid links, ${Object.keys(finalStreamList).length} qualities in stream_list`);
-      if (streamUrl) {
-        console.log(`   stream_url: ${streamUrl.substring(0, 60)}...`);
-      } else {
-        console.log(`   stream_url: null (no valid URL found)`);
-      }
-      console.log();
-    }
     
     // ✅ CRITICAL: Build response without spreading data to avoid including invalid URLs
     const responseData = {
@@ -1061,10 +1047,10 @@ app.get('/anime/episode/:slug', async (req, res) => {
       download_urls: data.download_urls, // Keep original for reference
       stream_url: streamUrl || null, // Only valid URLs
       stream_list: finalStreamList, // Only valid URLs (double validated)
-      resolved_links: finalValidLinks, // Only valid URLs (double validated)
+      resolved_links: finalResponseLinks, // Only valid URLs (double validated)
       extraction_time: `${elapsed}s`,
     };
-    
+
     res.json({
       status: 'success',
       data: responseData
