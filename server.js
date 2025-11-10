@@ -41,15 +41,30 @@ function isValidPixeldrainUrl(url) {
   // Reject if it's just the domain
   if (/^https?:\/\/pixeldrain\.com\/?$/i.test(url)) return false;
   
-  // Check if URL has a valid file ID
-  // Accept both /api/file/ID and /u/ID formats
-  const apiFormat = /pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})/i.test(url);
-  const webFormat = /pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})/i.test(url);
+  // Invalid file IDs to reject
+  const invalidIds = ['pixeldrain', 'api', 'file', 'u', 'www', 'com'];
   
-  // Also accept if it contains pixeldrain and has a file ID pattern
-  const hasFileIdPattern = /[a-zA-Z0-9_-]{8,}/.test(url) && url.includes('pixeldrain');
+  // Check if URL has a valid file ID in API format
+  const apiMatch = url.match(/pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})/i);
+  if (apiMatch) {
+    const fileId = apiMatch[1];
+    // ✅ CRITICAL: Reject invalid file IDs
+    if (!invalidIds.includes(fileId.toLowerCase())) {
+      return true;
+    }
+  }
   
-  return apiFormat || webFormat || hasFileIdPattern;
+  // Check if URL has a valid file ID in web format
+  const webMatch = url.match(/pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})/i);
+  if (webMatch) {
+    const fileId = webMatch[1];
+    // ✅ CRITICAL: Reject invalid file IDs
+    if (!invalidIds.includes(fileId.toLowerCase())) {
+      return true;
+    }
+  }
+  
+  return false;
 }
 
 // ============================================
@@ -171,17 +186,30 @@ async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
     }
     
     // Search in JS/HTML (more aggressive regex)
+    // ✅ CRITICAL: More specific patterns to avoid false matches
     const pdPatterns = [
-      /https?:\/\/pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})/gi,
-      /https?:\/\/pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})/gi,
-      /pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})/gi,
-      /pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})/gi,
+      /https?:\/\/pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})(?:\/|"|'|>|\s|$)/gi,
+      /https?:\/\/pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})(?:\/|"|'|>|\s|$)/gi,
+      /pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})(?:\/|"|'|>|\s|$)/gi,
+      /pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})(?:\/|"|'|>|\s|$)/gi,
     ];
+    
+    const invalidIds = ['pixeldrain', 'api', 'file', 'u', 'www', 'com'];
     
     for (const pattern of pdPatterns) {
       const matches = html.match(pattern);
       if (matches && matches.length > 0) {
         for (const match of matches) {
+          // Extract file ID from match
+          const fileIdMatch = match.match(/\/([a-zA-Z0-9_-]{8,})/);
+          if (fileIdMatch) {
+            const fileId = fileIdMatch[1];
+            // ✅ CRITICAL: Skip invalid file IDs
+            if (invalidIds.includes(fileId.toLowerCase())) {
+              continue;
+            }
+          }
+          
           const converted = convertToPixeldrainAPI(match);
           if (isValidPixeldrainUrl(converted)) {
             console.log(`      ✅ Pixeldrain in JS/HTML`);
@@ -203,16 +231,28 @@ async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
           
           // Search for pixeldrain URLs in error response
           const pdPatterns = [
-            /https?:\/\/pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})/gi,
-            /https?:\/\/pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})/gi,
-            /pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})/gi,
-            /pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})/gi,
+            /https?:\/\/pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})(?:\/|"|'|>|\s|$)/gi,
+            /https?:\/\/pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})(?:\/|"|'|>|\s|$)/gi,
+            /pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})(?:\/|"|'|>|\s|$)/gi,
+            /pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})(?:\/|"|'|>|\s|$)/gi,
           ];
+          
+          const invalidIds = ['pixeldrain', 'api', 'file', 'u', 'www', 'com'];
           
           for (const pattern of pdPatterns) {
             const matches = errorHtml.match(pattern);
             if (matches && matches.length > 0) {
               for (const match of matches) {
+                // Extract file ID from match
+                const fileIdMatch = match.match(/\/([a-zA-Z0-9_-]{8,})/);
+                if (fileIdMatch) {
+                  const fileId = fileIdMatch[1];
+                  // ✅ CRITICAL: Skip invalid file IDs
+                  if (invalidIds.includes(fileId.toLowerCase())) {
+                    continue;
+                  }
+                }
+                
                 const converted = convertToPixeldrainAPI(match);
                 if (isValidPixeldrainUrl(converted)) {
                   console.log(`      ✅ Found in error response`);
@@ -239,24 +279,36 @@ function convertToPixeldrainAPI(url) {
   // Clean URL
   url = url.trim();
   
+  // Invalid file IDs to reject
+  const invalidIds = ['pixeldrain', 'api', 'file', 'u', 'www', 'com'];
+  
   // Already in API format
   const apiMatch = url.match(/pixeldrain\.com\/api\/file\/([a-zA-Z0-9_-]{8,})/i);
   if (apiMatch) {
-    return `https://pixeldrain.com/api/file/${apiMatch[1]}`;
+    const fileId = apiMatch[1];
+    // ✅ CRITICAL: Reject invalid file IDs
+    if (!invalidIds.includes(fileId.toLowerCase())) {
+      return `https://pixeldrain.com/api/file/${fileId}`;
+    }
   }
   
   // Web format: pixeldrain.com/u/FILE_ID
   const webMatch = url.match(/pixeldrain\.com\/u\/([a-zA-Z0-9_-]{8,})/i);
   if (webMatch) {
-    return `https://pixeldrain.com/api/file/${webMatch[1]}`;
+    const fileId = webMatch[1];
+    // ✅ CRITICAL: Reject invalid file IDs
+    if (!invalidIds.includes(fileId.toLowerCase())) {
+      return `https://pixeldrain.com/api/file/${fileId}`;
+    }
   }
   
-  // Extract file ID from any pixeldrain URL format
-  const fileIdMatch = url.match(/([a-zA-Z0-9_-]{8,})/);
-  if (fileIdMatch && url.includes('pixeldrain')) {
-    const fileId = fileIdMatch[1];
-    // Make sure it's a valid length (pixeldrain IDs are usually 8+ chars)
-    if (fileId.length >= 8) {
+  // Extract file ID from any pixeldrain URL format (more specific)
+  // Look for file ID after /api/file/ or /u/
+  const specificMatch = url.match(/pixeldrain\.com\/(?:api\/file|u)\/([a-zA-Z0-9_-]{8,})/i);
+  if (specificMatch) {
+    const fileId = specificMatch[1];
+    // ✅ CRITICAL: Reject invalid file IDs and ensure it's not part of domain
+    if (!invalidIds.includes(fileId.toLowerCase()) && fileId.length >= 8) {
       return `https://pixeldrain.com/api/file/${fileId}`;
     }
   }
@@ -265,13 +317,22 @@ function convertToPixeldrainAPI(url) {
   if (!url.includes('http') && !url.includes('pixeldrain')) {
     const idMatch = url.match(/^([a-zA-Z0-9_-]{8,})$/);
     if (idMatch) {
-      return `https://pixeldrain.com/api/file/${idMatch[1]}`;
+      const fileId = idMatch[1];
+      // ✅ CRITICAL: Reject invalid file IDs
+      if (!invalidIds.includes(fileId.toLowerCase())) {
+        return `https://pixeldrain.com/api/file/${fileId}`;
+      }
     }
   }
   
   // Return as-is if it's already a valid URL (but not just domain)
   if ((url.startsWith('http://') || url.startsWith('https://')) && 
       !/^https?:\/\/pixeldrain\.com\/?$/i.test(url)) {
+    // ✅ CRITICAL: Check if it contains invalid file ID
+    const invalidCheck = url.match(/pixeldrain\.com\/api\/file\/([^\/\s]+)/i);
+    if (invalidCheck && invalidIds.includes(invalidCheck[1].toLowerCase())) {
+      return url; // Return as-is but it will be rejected by validation
+    }
     return url;
   }
   
@@ -702,13 +763,29 @@ app.get('/anime/episode/:slug', async (req, res) => {
     }
     
     // Last resort: use original stream_url (only if valid)
-    if (!streamUrl && data.stream_url && isValidPixeldrainUrl(data.stream_url)) {
-      streamUrl = data.stream_url;
+    if (!streamUrl && data.stream_url) {
+      // Validate original stream_url
+      if (data.stream_url.includes('pixeldrain.com')) {
+        if (isValidPixeldrainUrl(data.stream_url)) {
+          streamUrl = convertToPixeldrainAPI(data.stream_url);
+        }
+      } else if (data.stream_url.startsWith('http://') || data.stream_url.startsWith('https://')) {
+        // For non-pixeldrain URLs, just check if it's a valid HTTP URL
+        streamUrl = data.stream_url;
+      }
     }
     
-    // ✅ CRITICAL: If no valid stream URL found, set to empty string
-    if (streamUrl && !isValidPixeldrainUrl(streamUrl) && streamUrl.includes('pixeldrain')) {
-      console.log(`⚠️ Invalid stream_url detected, clearing...`);
+    // ✅ CRITICAL: Final validation - reject any invalid pixeldrain URLs
+    if (streamUrl && streamUrl.includes('pixeldrain.com')) {
+      if (!isValidPixeldrainUrl(streamUrl)) {
+        console.log(`⚠️ Invalid stream_url detected (${streamUrl.substring(0, 50)}...), clearing...`);
+        streamUrl = '';
+      }
+    }
+    
+    // ✅ CRITICAL: If stream_url is just domain, reject it
+    if (streamUrl && /^https?:\/\/pixeldrain\.com\/?$/i.test(streamUrl)) {
+      console.log(`⚠️ stream_url is just domain, clearing...`);
       streamUrl = '';
     }
 
@@ -729,21 +806,68 @@ app.get('/anime/episode/:slug', async (req, res) => {
       return link.url.startsWith('http://') || link.url.startsWith('https://');
     });
     
+    // ✅ CRITICAL: Also validate and clean data.resolved_links from API if it exists
+    // This ensures we don't return invalid URLs from the original API response
+    let cleanedApiResolvedLinks = [];
+    if (data.resolved_links && Array.isArray(data.resolved_links)) {
+      cleanedApiResolvedLinks = data.resolved_links.filter(link => {
+        if (!link || !link.url || typeof link.url !== 'string') return false;
+        
+        // If it's a pixeldrain URL, validate it
+        if (link.url.includes('pixeldrain.com')) {
+          return isValidPixeldrainUrl(link.url);
+        }
+        
+        // For other URLs, just check if it's a valid HTTP URL
+        return link.url.startsWith('http://') || link.url.startsWith('https://');
+      });
+    }
+    
+    // Merge our extracted links with cleaned API links (avoid duplicates)
+    const allValidLinks = [...finalResolvedLinks];
+    const seenUrlsFinal = new Set(finalResolvedLinks.map(l => l.url));
+    
+    for (const apiLink of cleanedApiResolvedLinks) {
+      if (!seenUrlsFinal.has(apiLink.url)) {
+        // Convert API link format to our format
+        allValidLinks.push({
+          provider: apiLink.provider || 'Unknown',
+          url: apiLink.url,
+          type: apiLink.type || 'mp4',
+          quality: apiLink.quality || 'auto',
+          source: apiLink.source || 'unknown',
+          priority: apiLink.priority || 2, // Lower priority than extracted links
+        });
+        seenUrlsFinal.add(apiLink.url);
+      }
+    }
+    
     // Log final results
-    if (finalResolvedLinks.length === 0 && Object.keys(streamList).length === 0) {
+    if (allValidLinks.length === 0 && Object.keys(streamList).length === 0) {
       console.log(`\n⚠️ WARNING: No valid streaming URLs found for this episode!`);
       console.log(`   This episode may not be available for streaming.\n`);
+    } else {
+      console.log(`\n✅ FINAL: ${allValidLinks.length} valid links, ${Object.keys(streamList).length} qualities in stream_list\n`);
     }
+    
+    // ✅ CRITICAL: Build response without spreading data to avoid including invalid URLs
+    const responseData = {
+      episode: data.episode,
+      anime: data.anime,
+      has_next_episode: data.has_next_episode,
+      next_episode: data.next_episode,
+      has_previous_episode: data.has_previous_episode,
+      previous_episode: data.previous_episode,
+      download_urls: data.download_urls, // Keep original for reference
+      stream_url: streamUrl || null, // Only valid URLs
+      stream_list: streamList, // Only valid URLs
+      resolved_links: allValidLinks, // Only valid URLs
+      extraction_time: `${elapsed}s`,
+    };
     
     res.json({
       status: 'success',
-      data: {
-        ...data,
-        stream_url: streamUrl || null, // Return null instead of empty string
-        stream_list: streamList, // Already cleaned
-        resolved_links: finalResolvedLinks, // Only valid URLs
-        extraction_time: `${elapsed}s`,
-      }
+      data: responseData
     });
 
   } catch (error) {
