@@ -133,13 +133,20 @@ async function extractDesustreamVideo(iframeUrl) {
 // ============================================
 
 async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
-  if (depth > 3) return null; // ✅ Max 3 levels
+  if (depth > 5) return null; // ✅ Increased to 5 levels for aggressive extraction
   
   try {
     const response = await axiosInstance.get(safelinkUrl, {
-      timeout: 5000, // ✅ 5s timeout per request
-      maxRedirects: 5,
+      timeout: 10000, // ✅ Increased to 10s timeout for aggressive extraction
+      maxRedirects: 10, // ✅ Increased redirects
       validateStatus: () => true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://desustream.com/',
+        'Cache-Control': 'no-cache',
+      },
     });
     
     const finalUrl = response.request?.res?.responseUrl || safelinkUrl;
@@ -179,10 +186,163 @@ async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
       }
     }
     
-    // Check nested safelink (recursive)
-    const nestedSafelink = $('a[href*="safelink"]').first().attr('href');
-    if (nestedSafelink && nestedSafelink !== safelinkUrl) {
-      return await extractPixeldrainFromSafelink(nestedSafelink, depth + 1);
+    // ✅ AGGRESSIVE: Try to decode base64 from safelink ID
+    try {
+      const idMatch = safelinkUrl.match(/[?&]id=([^&]+)/);
+      if (idMatch) {
+        const base64Id = idMatch[1];
+        try {
+          const decoded = Buffer.from(base64Id, 'base64').toString('utf-8');
+          // Check if decoded contains pixeldrain URL
+          const pdMatch = decoded.match(/pixeldrain\.com\/(?:api\/file|u)\/([a-zA-Z0-9_-]{8,})/i);
+          if (pdMatch) {
+            const fileId = pdMatch[1];
+            const invalidIds = ['pixeldrain', 'api', 'file', 'u', 'www', 'com'];
+            if (!invalidIds.includes(fileId.toLowerCase())) {
+              const converted = `https://pixeldrain.com/api/file/${fileId}`;
+              if (isValidPixeldrainUrl(converted)) {
+                console.log(`      ✅ Pixeldrain from base64 decode`);
+                return converted;
+              }
+            }
+          }
+        } catch (e) {
+          // Base64 decode failed, continue
+        }
+      }
+    } catch (e) {
+      // Ignore decode errors
+    }
+    
+    // ✅ AGGRESSIVE: Extract from meta refresh
+    const metaRefresh = $('meta[http-equiv="refresh"]').attr('content');
+    if (metaRefresh) {
+      const urlMatch = metaRefresh.match(/url=([^;]+)/i);
+      if (urlMatch) {
+        const refreshUrl = urlMatch[1].trim();
+        if (refreshUrl.includes('pixeldrain')) {
+          const converted = convertToPixeldrainAPI(refreshUrl);
+          if (isValidPixeldrainUrl(converted)) {
+            console.log(`      ✅ Pixeldrain from meta refresh`);
+            return converted;
+          }
+        } else if (refreshUrl.includes('safelink') && refreshUrl !== safelinkUrl) {
+          return await extractPixeldrainFromSafelink(refreshUrl, depth + 1);
+        }
+      }
+    }
+    
+    // ✅ AGGRESSIVE: Extract from window.location or document.location
+    const locationPatterns = [
+      /window\.location\s*=\s*['"]([^'"]+)['"]/gi,
+      /document\.location\s*=\s*['"]([^'"]+)['"]/gi,
+      /location\.href\s*=\s*['"]([^'"]+)['"]/gi,
+      /location\.replace\s*\(['"]([^'"]+)['"]/gi,
+    ];
+    
+    for (const pattern of locationPatterns) {
+      const matches = html.match(pattern);
+      if (matches) {
+        for (const match of matches) {
+          const urlMatch = match.match(/['"]([^'"]+)['"]/);
+          if (urlMatch) {
+            const locationUrl = urlMatch[1];
+            if (locationUrl.includes('pixeldrain')) {
+              const converted = convertToPixeldrainAPI(locationUrl);
+              if (isValidPixeldrainUrl(converted)) {
+                console.log(`      ✅ Pixeldrain from window.location`);
+                return converted;
+              }
+            } else if (locationUrl.includes('safelink') && locationUrl !== safelinkUrl) {
+              const result = await extractPixeldrainFromSafelink(locationUrl, depth + 1);
+              if (result) return result;
+            }
+          }
+        }
+      }
+    }
+    
+    // ✅ AGGRESSIVE: Extract from all buttons and form actions
+    const onclickElements = $('button[onclick*="pixeldrain"], a[onclick*="pixeldrain"]');
+    for (let i = 0; i < onclickElements.length; i++) {
+      const onclick = $(onclickElements[i]).attr('onclick');
+      if (onclick) {
+        const pdMatch = onclick.match(/pixeldrain\.com\/(?:api\/file|u)\/([a-zA-Z0-9_-]{8,})/i);
+        if (pdMatch) {
+          const fileId = pdMatch[1];
+          const invalidIds = ['pixeldrain', 'api', 'file', 'u', 'www', 'com'];
+          if (!invalidIds.includes(fileId.toLowerCase())) {
+            const converted = `https://pixeldrain.com/api/file/${fileId}`;
+            if (isValidPixeldrainUrl(converted)) {
+              console.log(`      ✅ Pixeldrain from onclick`);
+              return converted;
+            }
+          }
+        }
+      }
+    }
+    
+    // ✅ AGGRESSIVE: Extract from form actions
+    const formElements = $('form[action*="pixeldrain"]');
+    for (let i = 0; i < formElements.length; i++) {
+      const action = $(formElements[i]).attr('action');
+      if (action && action.includes('pixeldrain')) {
+        const converted = convertToPixeldrainAPI(action);
+        if (isValidPixeldrainUrl(converted)) {
+          console.log(`      ✅ Pixeldrain from form action`);
+          return converted;
+        }
+      }
+    }
+    
+    // ✅ AGGRESSIVE: Extract from iframes
+    const iframeElements = $('iframe[src*="pixeldrain"]');
+    for (let i = 0; i < iframeElements.length; i++) {
+      const src = $(iframeElements[i]).attr('src');
+      if (src) {
+        const converted = convertToPixeldrainAPI(src);
+        if (isValidPixeldrainUrl(converted)) {
+          console.log(`      ✅ Pixeldrain from iframe`);
+          return converted;
+        }
+      }
+    }
+    
+    // ✅ AGGRESSIVE: Extract from ALL links on page (not just safelink)
+    const allLinks = [];
+    $('a[href]').each((i, el) => {
+      const href = $(el).attr('href');
+      if (href && (href.includes('pixeldrain') || href.includes('safelink'))) {
+        if (!allLinks.includes(href)) {
+          allLinks.push(href);
+        }
+      }
+    });
+    
+    // Try pixeldrain links first
+    for (const link of allLinks) {
+      if (link.includes('pixeldrain.com') && !link.includes('safelink')) {
+        const converted = convertToPixeldrainAPI(link);
+        if (isValidPixeldrainUrl(converted)) {
+          console.log(`      ✅ Pixeldrain from page link`);
+          return converted;
+        }
+      }
+    }
+    
+    // ✅ AGGRESSIVE: Try ALL nested safelinks, not just first
+    const allNestedSafelinks = [];
+    $('a[href*="safelink"]').each((i, el) => {
+      const href = $(el).attr('href');
+      if (href && href !== safelinkUrl && !allNestedSafelinks.includes(href)) {
+        allNestedSafelinks.push(href);
+      }
+    });
+    
+    // Try up to 5 nested safelinks (increased from 3)
+    for (const nestedSafelink of allNestedSafelinks.slice(0, 5)) {
+      const result = await extractPixeldrainFromSafelink(nestedSafelink, depth + 1);
+      if (result) return result;
     }
     
     // Search in JS/HTML (more aggressive regex)
@@ -557,11 +717,11 @@ app.get('/anime/episode/:slug', async (req, res) => {
               return aPriority - bPriority;
             });
             
-            // ✅ INCREASED: Process up to 4 URLs per resolution (was 2)
-            const limitedUrls = sortedUrls.slice(0, 4);
+            // ✅ AGGRESSIVE: Process ALL URLs per resolution
+            const allUrls = sortedUrls; // Process all URLs, no limit
             let extractedCount = 0;
           
-          for (const urlData of limitedUrls) {
+          for (const urlData of allUrls) {
               const provider = urlData.provider?.trim() || 'Unknown';
             const rawUrl = urlData.url;
               
@@ -842,12 +1002,52 @@ app.get('/anime/episode/:slug', async (req, res) => {
       }
     }
     
-    // Log final results
+    // Log final results (before final validation)
     if (allValidLinks.length === 0 && Object.keys(streamList).length === 0) {
       console.log(`\n⚠️ WARNING: No valid streaming URLs found for this episode!`);
       console.log(`   This episode may not be available for streaming.\n`);
     } else {
-      console.log(`\n✅ FINAL: ${allValidLinks.length} valid links, ${Object.keys(streamList).length} qualities in stream_list\n`);
+      console.log(`\n✅ Before final check: ${allValidLinks.length} valid links, ${Object.keys(streamList).length} qualities in stream_list\n`);
+    }
+    
+    // ✅ CRITICAL: Final validation - double check everything
+    // Validate stream_url one more time
+    if (streamUrl && streamUrl.includes('pixeldrain.com') && !isValidPixeldrainUrl(streamUrl)) {
+      console.log(`⚠️ Final check: stream_url is invalid, clearing...`);
+      streamUrl = null;
+    }
+    
+    // Validate stream_list one more time
+    const finalStreamList = {};
+    for (const [quality, url] of Object.entries(streamList)) {
+      if (isValidPixeldrainUrl(url)) {
+        finalStreamList[quality] = url;
+      } else {
+        console.log(`⚠️ Final check: stream_list[${quality}] is invalid, removing...`);
+      }
+    }
+    
+    // Validate resolved_links one more time (final check)
+    const finalValidLinks = allValidLinks.filter(link => {
+      if (!link.url || typeof link.url !== 'string') return false;
+      if (link.url.includes('pixeldrain.com')) {
+        return isValidPixeldrainUrl(link.url);
+      }
+      return link.url.startsWith('http://') || link.url.startsWith('https://');
+    });
+    
+    // Log final results after validation
+    if (finalValidLinks.length === 0 && Object.keys(finalStreamList).length === 0) {
+      console.log(`\n⚠️ FINAL WARNING: No valid streaming URLs after validation!`);
+      console.log(`   Response will have empty stream_list and resolved_links.\n`);
+    } else {
+      console.log(`\n✅ FINAL RESULT: ${finalValidLinks.length} valid links, ${Object.keys(finalStreamList).length} qualities in stream_list`);
+      if (streamUrl) {
+        console.log(`   stream_url: ${streamUrl.substring(0, 60)}...`);
+      } else {
+        console.log(`   stream_url: null (no valid URL found)`);
+      }
+      console.log();
     }
     
     // ✅ CRITICAL: Build response without spreading data to avoid including invalid URLs
@@ -860,8 +1060,8 @@ app.get('/anime/episode/:slug', async (req, res) => {
       previous_episode: data.previous_episode,
       download_urls: data.download_urls, // Keep original for reference
       stream_url: streamUrl || null, // Only valid URLs
-      stream_list: streamList, // Only valid URLs
-      resolved_links: allValidLinks, // Only valid URLs
+      stream_list: finalStreamList, // Only valid URLs (double validated)
+      resolved_links: finalValidLinks, // Only valid URLs (double validated)
       extraction_time: `${elapsed}s`,
     };
     
