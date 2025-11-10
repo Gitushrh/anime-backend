@@ -134,7 +134,7 @@ async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
     if (finalUrl.includes('pixeldrain.com')) {
       const converted = convertToPixeldrainAPI(finalUrl);
       if (isValidPixeldrainUrl(converted)) {
-        console.log(`      ✅ Pixeldrain redirect`);
+      console.log(`      ✅ Pixeldrain redirect`);
         return converted;
       }
     }
@@ -159,7 +159,7 @@ async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
     for (const pdLink of pdLinks) {
       const converted = convertToPixeldrainAPI(pdLink);
       if (isValidPixeldrainUrl(converted)) {
-        console.log(`      ✅ Pixeldrain found`);
+      console.log(`      ✅ Pixeldrain found`);
         return converted;
       }
     }
@@ -226,7 +226,7 @@ async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
         // Ignore extraction errors
       }
     } else {
-      console.log(`      ❌ Timeout/Error`);
+    console.log(`      ❌ Timeout/Error`);
     }
   }
   
@@ -449,46 +449,46 @@ app.get('/anime/episode/:slug', async (req, res) => {
         console.log(`⚠️ stream_list incomplete (missing: ${missing.join(', ')}) - Extracting from safelinks...\n`);
       }
       
-      const extractionPromises = [];
-      
-      // Desustream
-      if (data.stream_url && data.stream_url.includes('desustream.info')) {
-        console.log('🎬 Desustream...');
-        extractionPromises.push(
-          extractDesustreamVideo(data.stream_url)
-            .then(result => {
-              if (result) {
-                processedLinks.push({
-                  provider: 'Desustream',
-                  url: result.url,
-                  type: result.type,
-                  quality: 'auto',
-                  source: 'desustream',
+    const extractionPromises = [];
+    
+    // Desustream
+    if (data.stream_url && data.stream_url.includes('desustream.info')) {
+      console.log('🎬 Desustream...');
+      extractionPromises.push(
+        extractDesustreamVideo(data.stream_url)
+          .then(result => {
+            if (result) {
+              processedLinks.push({
+                provider: 'Desustream',
+                url: result.url,
+                type: result.type,
+                quality: 'auto',
+                source: 'desustream',
                   priority: 1,
-                });
-                console.log('   ✅ Desustream added\n');
-              }
-            })
-        );
-      }
+              });
+              console.log('   ✅ Desustream added\n');
+            }
+          })
+      );
+    }
 
       // Process download URLs - AGGRESSIVE EXTRACTION
-      if (data.download_urls) {
-        const allResolutions = [
-          ...(data.download_urls.mp4 || []),
-          ...(data.download_urls.mkv || []).map(mkv => ({ ...mkv, format: 'mkv' })),
-        ];
+    if (data.download_urls) {
+      const allResolutions = [
+        ...(data.download_urls.mp4 || []),
+        ...(data.download_urls.mkv || []).map(mkv => ({ ...mkv, format: 'mkv' })),
+      ];
         
         // Priority providers (more reliable)
         const priorityProviders = ['Pdrain', 'ODFiles', 'OD Files'];
+      
+      for (const resGroup of allResolutions) {
+        const resolution = resGroup.resolution;
+        const format = resGroup.format || 'mp4';
         
-        for (const resGroup of allResolutions) {
-          const resolution = resGroup.resolution;
-          const format = resGroup.format || 'mp4';
-          
           console.log(`🎯 ${resolution} (${format})...`);
-          
-          if (resGroup.urls && Array.isArray(resGroup.urls)) {
+        
+        if (resGroup.urls && Array.isArray(resGroup.urls)) {
             // Sort URLs: priority providers first
             const sortedUrls = [...resGroup.urls].sort((a, b) => {
               const aPriority = priorityProviders.some(p => a.provider?.includes(p)) ? 0 : 1;
@@ -499,37 +499,37 @@ app.get('/anime/episode/:slug', async (req, res) => {
             // ✅ INCREASED: Process up to 4 URLs per resolution (was 2)
             const limitedUrls = sortedUrls.slice(0, 4);
             let extractedCount = 0;
-            
-            for (const urlData of limitedUrls) {
+          
+          for (const urlData of limitedUrls) {
               const provider = urlData.provider?.trim() || 'Unknown';
-              const rawUrl = urlData.url;
+            const rawUrl = urlData.url;
               
               if (!rawUrl) continue;
-              
-              // Direct Pixeldrain
-              if (rawUrl.includes('pixeldrain.com')) {
+            
+            // Direct Pixeldrain
+            if (rawUrl.includes('pixeldrain.com')) {
                 const finalUrl = convertToPixeldrainAPI(rawUrl);
                 if (isValidPixeldrainUrl(finalUrl)) {
-                  console.log(`   💧 ${provider}`);
-                  processedLinks.push({
-                    provider: `${provider} (${resolution})`,
-                    url: finalUrl,
-                    type: format,
-                    quality: resolution,
-                    source: 'pixeldrain',
-                    priority: 1,
-                  });
+              console.log(`   💧 ${provider}`);
+              processedLinks.push({
+                provider: `${provider} (${resolution})`,
+                url: finalUrl,
+                type: format,
+                quality: resolution,
+                source: 'pixeldrain',
+                priority: 1,
+              });
                   extractedCount++;
-                  console.log(`      ✅ Added\n`);
+              console.log(`      ✅ Added\n`);
                 }
-              }
-              
+            }
+            
               // Safelink (async extraction) - AGGRESSIVE
-              else if (rawUrl.includes('safelink')) {
-                console.log(`   🔓 ${provider}`);
-                extractionPromises.push(
-                  extractPixeldrainFromSafelink(rawUrl)
-                    .then(finalUrl => {
+            else if (rawUrl.includes('safelink')) {
+              console.log(`   🔓 ${provider}`);
+              extractionPromises.push(
+                extractPixeldrainFromSafelink(rawUrl)
+                  .then(finalUrl => {
                       if (!finalUrl) {
                         console.log(`      ⚠️ No URL extracted\n`);
                         return;
@@ -540,63 +540,63 @@ app.get('/anime/episode/:slug', async (req, res) => {
                       
                       // Validate URL
                       if (isValidPixeldrainUrl(convertedUrl)) {
-                        processedLinks.push({
-                          provider: `${provider} (${resolution})`,
+                      processedLinks.push({
+                        provider: `${provider} (${resolution})`,
                           url: convertedUrl,
-                          type: format,
-                          quality: resolution,
-                          source: 'pixeldrain',
-                          priority: 1,
-                        });
+                        type: format,
+                        quality: resolution,
+                        source: 'pixeldrain',
+                        priority: 1,
+                      });
                         extractedCount++;
                         console.log(`      ✅ Extracted: ${convertedUrl.substring(0, 50)}...\n`);
                       } else {
                         console.log(`      ⚠️ Invalid URL: ${convertedUrl.substring(0, 50)}...\n`);
-                      }
-                    })
+                    }
+                  })
                     .catch(err => {
                       const errorMsg = err.message ? err.message.substring(0, 30) : 'Unknown error';
                       console.log(`      ❌ Failed: ${errorMsg}\n`);
-                    })
-                );
-              }
-              
-              // Blogger
-              else if (rawUrl.includes('blogger.com') || rawUrl.includes('blogspot.com')) {
-                console.log(`   🎬 ${provider}`);
-                extractionPromises.push(
-                  extractBloggerVideo(rawUrl)
-                    .then(finalUrl => {
-                      if (finalUrl) {
-                        processedLinks.push({
-                          provider: `${provider} (${resolution})`,
-                          url: finalUrl,
-                          type: format,
-                          quality: resolution,
-                          source: 'blogger',
-                          priority: 2,
-                        });
+                  })
+              );
+            }
+            
+            // Blogger
+            else if (rawUrl.includes('blogger.com') || rawUrl.includes('blogspot.com')) {
+              console.log(`   🎬 ${provider}`);
+              extractionPromises.push(
+                extractBloggerVideo(rawUrl)
+                  .then(finalUrl => {
+                    if (finalUrl) {
+                      processedLinks.push({
+                        provider: `${provider} (${resolution})`,
+                        url: finalUrl,
+                        type: format,
+                        quality: resolution,
+                        source: 'blogger',
+                        priority: 2,
+                      });
                         extractedCount++;
-                        console.log(`      ✅ Added\n`);
-                      }
-                    })
+                      console.log(`      ✅ Added\n`);
+                    }
+                  })
                     .catch(err => {
                       console.log(`      ❌ Failed: ${err.message.substring(0, 30)}\n`);
-                    })
-                );
-              }
+                  })
+              );
             }
+          }
             
             if (extractedCount === 0 && limitedUrls.length > 0) {
               console.log(`   ⚠️ No valid URLs extracted for ${resolution}\n`);
-            }
           }
         }
       }
+    }
 
-      // ✅ Wait for all extractions (with timeout)
+    // ✅ Wait for all extractions (with timeout)
       console.log(`\n⏳ Waiting for ${extractionPromises.length} extractions...\n`);
-      await Promise.allSettled(extractionPromises);
+    await Promise.allSettled(extractionPromises);
 
       // Build stream_list from extracted links (one per quality, best priority)
       // Only add qualities that don't exist in stream_list yet
@@ -628,12 +628,18 @@ app.get('/anime/episode/:slug', async (req, res) => {
       }
     }
 
-    // Remove duplicates
+    // Remove duplicates and validate URLs
     const uniqueLinks = [];
     const seenUrls = new Set();
     
     for (const link of processedLinks) {
-      if (!seenUrls.has(link.url)) {
+      // ✅ CRITICAL: Only add valid URLs
+      if (!isValidPixeldrainUrl(link.url) && link.source === 'pixeldrain') {
+        continue; // Skip invalid pixeldrain URLs
+      }
+      
+      // For non-pixeldrain sources, check if URL is valid
+      if (link.url && link.url.startsWith('http') && !seenUrls.has(link.url)) {
         seenUrls.add(link.url);
         uniqueLinks.push(link);
       }
@@ -641,6 +647,15 @@ app.get('/anime/episode/:slug', async (req, res) => {
 
     // Sort by priority (stream_list links first)
     uniqueLinks.sort((a, b) => a.priority - b.priority);
+    
+    // ✅ CRITICAL: Clean stream_list - remove invalid URLs
+    const cleanedStreamList = {};
+    for (const [quality, url] of Object.entries(streamList)) {
+      if (isValidPixeldrainUrl(url)) {
+        cleanedStreamList[quality] = url;
+      }
+    }
+    streamList = cleanedStreamList;
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
     
@@ -658,7 +673,7 @@ app.get('/anime/episode/:slug', async (req, res) => {
     // Try stream_list first (720p preferred)
     const qualityOrder = ['720p', '1080p', '480p', '360p'];
     for (const q of qualityOrder) {
-      if (streamList[q]) {
+      if (streamList[q] && isValidPixeldrainUrl(streamList[q])) {
         streamUrl = streamList[q];
         console.log(`✅ Default stream: ${q}`);
         break;
@@ -667,29 +682,66 @@ app.get('/anime/episode/:slug', async (req, res) => {
     
     // Fallback to desustream
     if (!streamUrl) {
-      const desustream = uniqueLinks.find(l => l.source === 'desustream');
+      const desustream = uniqueLinks.find(l => l.source === 'desustream' && l.url && l.url.startsWith('http'));
       if (desustream) {
         streamUrl = desustream.url;
       }
     }
     
-    // Fallback to first available
+    // Fallback to first valid link
     if (!streamUrl && uniqueLinks.length > 0) {
-      streamUrl = uniqueLinks[0].url;
+      const validLink = uniqueLinks.find(l => {
+        if (l.source === 'pixeldrain') {
+          return isValidPixeldrainUrl(l.url);
+        }
+        return l.url && l.url.startsWith('http');
+      });
+      if (validLink) {
+        streamUrl = validLink.url;
+      }
     }
     
-    // Last resort: use original stream_url
-    if (!streamUrl && data.stream_url) {
+    // Last resort: use original stream_url (only if valid)
+    if (!streamUrl && data.stream_url && isValidPixeldrainUrl(data.stream_url)) {
       streamUrl = data.stream_url;
     }
+    
+    // ✅ CRITICAL: If no valid stream URL found, set to empty string
+    if (streamUrl && !isValidPixeldrainUrl(streamUrl) && streamUrl.includes('pixeldrain')) {
+      console.log(`⚠️ Invalid stream_url detected, clearing...`);
+      streamUrl = '';
+    }
 
+    // ✅ FINAL VALIDATION: Ensure all URLs in resolved_links are valid
+    const finalResolvedLinks = uniqueLinks.filter(link => {
+      if (!link.url || typeof link.url !== 'string') return false;
+      
+      if (link.source === 'pixeldrain') {
+        return isValidPixeldrainUrl(link.url);
+      }
+      
+      // For other sources (desustream, blogger), check if it's a valid HTTP URL
+      // Reject if it's just pixeldrain domain
+      if (link.url.includes('pixeldrain.com') && !isValidPixeldrainUrl(link.url)) {
+        return false;
+      }
+      
+      return link.url.startsWith('http://') || link.url.startsWith('https://');
+    });
+    
+    // Log final results
+    if (finalResolvedLinks.length === 0 && Object.keys(streamList).length === 0) {
+      console.log(`\n⚠️ WARNING: No valid streaming URLs found for this episode!`);
+      console.log(`   This episode may not be available for streaming.\n`);
+    }
+    
     res.json({
       status: 'success',
       data: {
         ...data,
-        stream_url: streamUrl,
-        stream_list: streamList,
-        resolved_links: uniqueLinks,
+        stream_url: streamUrl || null, // Return null instead of empty string
+        stream_list: streamList, // Already cleaned
+        resolved_links: finalResolvedLinks, // Only valid URLs
         extraction_time: `${elapsed}s`,
       }
     });
