@@ -67,6 +67,86 @@ function isValidPixeldrainUrl(url) {
   return false;
 }
 
+function decodeBase64Safe(value) {
+  if (!value) return null;
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/').replace(/\s/g, '+');
+  try {
+    const buffer = Buffer.from(normalized, 'base64');
+    if (buffer.length === 0) return null;
+    return buffer.toString('utf-8');
+  } catch (e) {
+    return null;
+  }
+}
+
+function tryExtractUrl(text) {
+  if (!text || typeof text !== 'string') return null;
+  const urlMatch = text.match(/https?:\/\/[^\s"'<>]+/i);
+  if (urlMatch) {
+    return urlMatch[0];
+  }
+  return null;
+}
+
+function decodeSafelinkIdRecursive(value, depth = 0, visited = new Set()) {
+  if (!value || depth > 6 || visited.has(value)) return null;
+  visited.add(value);
+
+  // Direct URL check
+  const directUrl = tryExtractUrl(value);
+  if (directUrl) {
+    return directUrl;
+  }
+
+  // Try URI decode
+  try {
+    const uriDecoded = decodeURIComponent(value);
+    if (uriDecoded && uriDecoded !== value) {
+      const uriUrl = tryExtractUrl(uriDecoded);
+      if (uriUrl) {
+        return uriUrl;
+      }
+      const recursion = decodeSafelinkIdRecursive(uriDecoded, depth + 1, visited);
+      if (recursion) return recursion;
+    }
+  } catch (e) { /* ignore */ }
+
+  // Try base64 decode (multiple attempts)
+  const decoded = decodeBase64Safe(value);
+  if (decoded && decoded !== value) {
+    const decodedUrl = tryExtractUrl(decoded);
+    if (decodedUrl) {
+      return decodedUrl;
+    }
+    return decodeSafelinkIdRecursive(decoded, depth + 1, visited);
+  }
+
+  return null;
+}
+
+function tryDecodeSafelinkUrl(safelinkUrl) {
+  try {
+    const urlObj = new URL(safelinkUrl);
+    const idParam = urlObj.searchParams.get('id');
+    if (!idParam) return null;
+    const decoded = decodeSafelinkIdRecursive(idParam);
+    if (!decoded) return null;
+
+    if (decoded.includes('pixeldrain.com')) {
+      return convertToPixeldrainAPI(decoded);
+    }
+
+    // If decoded still points to safelink, attempt recursive decode
+    if (decoded.includes('safelink')) {
+      return tryDecodeSafelinkUrl(decoded);
+    }
+
+    return decoded;
+  } catch (e) {
+    return null;
+  }
+}
+
 // ============================================
 // 🔧 DESUSTREAM VIDEO EXTRACTOR (Fast)
 // ============================================
@@ -119,6 +199,28 @@ async function extractDesustreamVideo(iframeUrl) {
       }
     }
     
+    // Fallback: search entire HTML for pixeldrain/hls/mp4 links
+    const pixeldrainMatch = html.match(/https?:\/\/pixeldrain\.com\/[^\s"'<>)]+/i);
+    if (pixeldrainMatch) {
+      const converted = convertToPixeldrainAPI(pixeldrainMatch[0]);
+      if (isValidPixeldrainUrl(converted)) {
+        console.log(`      ✅ Pixeldrain link found in HTML`);
+        return { type: 'mp4', url: converted };
+      }
+    }
+
+    const mp4HtmlMatch = html.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
+    if (mp4HtmlMatch) {
+      console.log(`      ✅ MP4 link found in HTML`);
+      return { type: 'mp4', url: mp4HtmlMatch[0] };
+    }
+
+    const hlsHtmlMatch = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/i);
+    if (hlsHtmlMatch) {
+      console.log(`      ✅ HLS link found in HTML`);
+      return { type: 'hls', url: hlsHtmlMatch[0] };
+    }
+
     console.log('      ⚠️ No video found');
     return null;
     
@@ -135,6 +237,24 @@ async function extractDesustreamVideo(iframeUrl) {
 async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
   if (depth > 5) return null; // ✅ Increased to 5 levels for aggressive extraction
   
+  // Try to decode safelink without network first
+  const decodedUrl = tryDecodeSafelinkUrl(safelinkUrl);
+  if (decodedUrl) {
+    if (decodedUrl.includes('pixeldrain.com')) {
+      const converted = convertToPixeldrainAPI(decodedUrl);
+      if (isValidPixeldrainUrl(converted)) {
+        console.log(`      ✅ Pixeldrain decoded without request`);
+        return converted;
+      }
+    } else if (decodedUrl.includes('safelink') && decodedUrl !== safelinkUrl) {
+      console.log(`      🔁 Decoded nested safelink without request`);
+      return await extractPixeldrainFromSafelink(decodedUrl, depth + 1);
+    } else if (decodedUrl.startsWith('http://') || decodedUrl.startsWith('https://')) {
+      console.log(`      ✅ Direct URL decoded without request`);
+      return decodedUrl;
+    }
+  }
+
   try {
     const response = await axiosInstance.get(safelinkUrl, {
       timeout: 10000, // ✅ Increased to 10s timeout for aggressive extraction
