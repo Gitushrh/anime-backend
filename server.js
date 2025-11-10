@@ -220,7 +220,7 @@ async function extractDesustreamVideo(iframeUrl) {
       console.log(`      ✅ HLS link found in HTML`);
       return { type: 'hls', url: hlsHtmlMatch[0] };
     }
-
+    
     console.log('      ⚠️ No video found');
     return null;
     
@@ -254,7 +254,7 @@ async function extractPixeldrainFromSafelink(safelinkUrl, depth = 0) {
       return decodedUrl;
     }
   }
-
+  
   try {
     const response = await axiosInstance.get(safelinkUrl, {
       timeout: 10000, // ✅ Increased to 10s timeout for aggressive extraction
